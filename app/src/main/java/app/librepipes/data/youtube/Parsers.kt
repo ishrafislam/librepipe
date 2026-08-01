@@ -1,0 +1,614 @@
+package app.librepipes.data.youtube
+
+import app.librepipes.data.model.ChannelRef
+import app.librepipes.data.model.PlaylistRef
+import app.librepipes.data.model.StreamRef
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+
+/**
+ * Pure JSON -> model parsing for InnerTube responses.
+ * Handles both legacy renderers (videoRenderer, channelRenderer, ...) and
+ * the 2025+ "lockupViewModel" layout used by channels, playlists and search.
+ */
+object Parsers {
+
+    // ------------------------------------------------------------ primitives
+
+    /** Extracts text from {"runs":[{"text":..}],..} / {"simpleText":..} / {"content":..}. */
+    fun runsText(o: JSONObject?): String? {
+        if (o == null) return null
+        o.opt("content")?.let { if (it is String && it.isNotBlank()) return it }
+        o.optString("simpleText").takeIf { it.isNotBlank() }?.let { return it }
+        val runs = o.optJSONArray("runs") ?: return null
+        if (runs.length() == 0) return null
+        return buildString {
+            for (i in 0 until runs.length()) {
+                append(runs.optJSONObject(i)?.optString("text").orEmpty())
+            }
+        }.takeIf { it.isNotBlank() }
+    }
+
+    /** Best (largest) thumbnail URL from a {"thumbnails":[..]} / {"sources":[..]} array. */
+    fun sourcesBest(o: JSONObject?): String? {
+        if (o == null) return null
+        val arr = o.optJSONArray("thumbnails") ?: o.optJSONArray("sources") ?: return null
+        var best: String? = null
+        var bestScore = -1
+        for (i in 0 until arr.length()) {
+            val t = arr.optJSONObject(i) ?: continue
+            val url = t.optString("url").takeIf { it.isNotBlank() } ?: continue
+            val score = t.optInt("width", 0) * t.optInt("height", 0)
+            if (score > bestScore) {
+                bestScore = score
+                best = url
+            }
+        }
+        return best
+    }
+
+    /** "3:34" or "1:02:34" -> seconds. */
+    fun parseDuration(text: String?): Long {
+        if (text.isNullOrBlank()) return 0L
+        val parts = text.split(':').mapNotNull { it.trim().toLongOrNull() }
+        return when (parts.size) {
+            0 -> 0L
+            1 -> parts[0]
+            2 -> parts[0] * 60 + parts[1]
+            else -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+        }
+    }
+
+    /** "1,799,078,920 views" -> 1799078920. */
+    fun parseViewCount(text: String?): Long {
+        if (text.isNullOrBlank()) return 0L
+        val digits = text.filter { it.isDigit() }
+        return digits.toLongOrNull() ?: 0L
+    }
+
+    /** "4.52M subscribers" / "12.3K views" -> number. */
+    fun parseCompactCount(text: String?): Long {
+        if (text.isNullOrBlank()) return 0L
+        val match = Regex("([\\d.,]+)\\s*([KMBkmb])?").find(text) ?: return 0L
+        val value = match.groupValues[1].replace(",", "").toDoubleOrNull() ?: return 0L
+        return when (match.groupValues[2].uppercase()) {
+            "K" -> (value * 1_000).toLong()
+            "M" -> (value * 1_000_000).toLong()
+            "B" -> (value * 1_000_000_000).toLong()
+            else -> value.toLong()
+        }
+    }
+
+    // ------------------------------------------------------------- navigation
+
+    /** First JSONObject in depth-first order whose key matches. */
+    fun findFirst(root: JSONObject?, key: String): JSONObject? {
+        if (root == null) return null
+        root.optJSONObject(key)?.let { return it }
+        for (k in root.keys()) {
+            val v = root.opt(k) ?: continue
+            when (v) {
+                is JSONObject -> findFirst(v, key)?.let { return it }
+                is JSONArray -> for (i in 0 until v.length()) {
+                    v.optJSONObject(i)?.let { findFirst(it, key) }?.let { return it }
+                }
+            }
+        }
+        return null
+    }
+
+    /** All JSONObjects matching [key], depth-first. */
+    fun findAll(root: JSONObject?, key: String, out: MutableList<JSONObject> = mutableListOf()): List<JSONObject> {
+        if (root == null) return out
+        root.optJSONObject(key)?.let { out.add(it) }
+        for (k in root.keys()) {
+            val v = root.opt(k) ?: continue
+            when (v) {
+                is JSONObject -> findAll(v, key, out)
+                is JSONArray -> for (i in 0 until v.length()) {
+                    v.optJSONObject(i)?.let { findAll(it, key, out) }
+                }
+            }
+        }
+        return out
+    }
+
+    /** Pagination token from a page response (new + legacy continuation items). */
+    fun continuationToken(root: JSONObject?): String? {
+        if (root == null) return null
+        findFirst(root, "continuationItemViewModel")?.let { return tokenIn(it) }
+        findFirst(root, "continuationItemRenderer")?.let { return tokenIn(it) }
+        return findFirst(root, "continuationCommand")
+            ?.optString("token")?.takeIf { it.isNotBlank() }
+    }
+
+    private fun tokenIn(item: JSONObject): String? {
+        item.optJSONObject("continuationEndpoint")
+            ?.optJSONObject("continuationCommand")
+            ?.optString("token")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        item.optJSONObject("continuationCommand")
+            ?.optJSONObject("innertubeCommand")
+            ?.optJSONObject("continuationCommand")
+            ?.optString("token")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        return null
+    }
+
+    // ------------------------------------------------------ search renderers
+
+    fun parseVideoRenderer(o: JSONObject): StreamRef? {
+        val videoId = o.optString("videoId").takeIf { it.isNotBlank() } ?: return null
+        val ownerText = o.optJSONObject("ownerText")
+        val ownerRun = ownerText?.optJSONArray("runs")?.optJSONObject(0)
+        val isLive = isLiveRenderer(o)
+        return StreamRef(
+            id = videoId,
+            title = runsText(o.optJSONObject("title")) ?: videoId,
+            url = watchUrl(videoId),
+            thumbnailUrl = sourcesBest(o.optJSONObject("thumbnail")),
+            uploaderName = ownerRun?.optString("text"),
+            uploaderUrl = uploaderUrlFrom(ownerRun?.optJSONObject("navigationEndpoint")),
+            duration = if (isLive) 0L else parseDuration(runsText(o.optJSONObject("lengthText"))),
+            viewCount = parseViewCount(runsText(o.optJSONObject("viewCountText"))),
+            textualDate = runsText(o.optJSONObject("publishedTimeText")),
+            isLive = isLive,
+        )
+    }
+
+    fun parseChannelRenderer(o: JSONObject): ChannelRef? {
+        val channelId = o.optString("channelId").takeIf { it.isNotBlank() } ?: return null
+        return ChannelRef(
+            id = channelId,
+            name = runsText(o.optJSONObject("title")) ?: channelId,
+            url = channelUrl(channelId),
+            avatarUrl = sourcesBest(o.optJSONObject("thumbnail")),
+            subscriberCount = parseCompactCount(runsText(o.optJSONObject("subscriberCountText"))),
+            description = runsText(o.optJSONObject("descriptionSnippet")),
+        )
+    }
+
+    /** Legacy search playlist renderer (rare in 2026, still supported). */
+    fun parsePlaylistRenderer(o: JSONObject): PlaylistRef? {
+        val playlistId = o.optString("playlistId").takeIf { it.isNotBlank() } ?: return null
+        val thumb = o.optJSONObject("thumbnailRenderer")
+            ?.optJSONObject("playlistVideoThumbnailRenderer")
+            ?.optJSONObject("thumbnail")
+        return PlaylistRef(
+            id = playlistId,
+            name = runsText(o.optJSONObject("title")) ?: playlistId,
+            url = playlistUrl(playlistId),
+            thumbnailUrl = sourcesBest(thumb),
+            uploaderName = runsText(o.optJSONObject("shortBylineText")),
+            streamCount = parseViewCount(runsText(o.optJSONObject("videoCountText"))),
+        )
+    }
+
+    /** New 2025+ renderer used for videos in channels, playlists and search. */
+    fun parseLockupVideo(o: JSONObject): StreamRef? {
+        val videoId = o.optString("contentId").takeIf { it.isNotBlank() } ?: return null
+        val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
+        val rows = metadataRows(meta)
+        val (uploader, uploaderUrl) = ownerFromRows(rows)
+        return StreamRef(
+            id = videoId,
+            title = runsText(meta.optJSONObject("title")) ?: videoId,
+            url = watchUrl(videoId),
+            thumbnailUrl = sourcesBest(
+                o.optJSONObject("contentImage")?.optJSONObject("thumbnailViewModel")?.optJSONObject("image"),
+            ),
+            uploaderName = uploader,
+            uploaderUrl = uploaderUrl,
+            duration = parseDuration(durationBadge(o)),
+            viewCount = rows.firstNotNullOfOrNull {
+                parseCompactCount(it).takeIf { n -> n > 0 && "view" in it }
+            } ?: 0L,
+            textualDate = rows.firstOrNull { isDateText(it) },
+        )
+    }
+
+    fun parseLockupPlaylist(o: JSONObject): PlaylistRef? {
+        val playlistId = o.optString("contentId").takeIf { it.isNotBlank() } ?: return null
+        val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
+        val rows = metadataRows(meta)
+        return PlaylistRef(
+            id = playlistId,
+            name = runsText(meta.optJSONObject("title")) ?: playlistId,
+            url = playlistUrl(playlistId),
+            thumbnailUrl = sourcesBest(
+                o.optJSONObject("contentImage")?.optJSONObject("thumbnailViewModel")?.optJSONObject("image"),
+            ),
+            uploaderName = rows.firstOrNull { isOwnerText(it) },
+            streamCount = rows.firstNotNullOfOrNull {
+                val n = parseViewCount(it)
+                if (n > 0 && Regex("\\d").containsMatchIn(it)) n else null
+            } ?: 0L,
+        )
+    }
+
+    /** YouTube Music list item (WEB_REMIX search results). */
+    fun parseMusicItem(o: JSONObject): StreamRef? {
+        val play = o.optJSONObject("overlay")
+            ?.optJSONObject("musicItemThumbnailOverlayRenderer")
+            ?.optJSONObject("content")
+            ?.optJSONObject("musicPlayButtonRenderer")
+            ?.optJSONObject("playNavigationEndpoint")
+            ?: return null
+        val videoId = play.optJSONObject("watchEndpoint")?.optString("videoId")
+            ?.takeIf { it.isNotBlank() } ?: return null
+        val columns = o.optJSONArray("flexColumns") ?: return null
+        val title = columns.optJSONObject(0)
+            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+            ?.optJSONObject("text")?.let { runsText(it) }
+            ?: videoId
+        val secondary = columns.optJSONObject(1)
+            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+            ?.optJSONObject("text")
+            ?.let { runsText(it) }
+            ?: ""
+        val parts = secondary.split("•").map { it.trim() }
+        val thumbnail = o.optJSONObject("thumbnail")
+            ?.optJSONObject("musicThumbnailRenderer")
+            ?.optJSONObject("thumbnail")
+        return StreamRef(
+            id = videoId,
+            title = title,
+            url = watchUrl(videoId),
+            thumbnailUrl = sourcesBest(thumbnail),
+            uploaderName = parts.firstOrNull { it.isNotBlank() },
+            duration = parts.firstNotNullOfOrNull { parseDuration(it).takeIf { d -> d > 0 } } ?: 0L,
+            viewCount = parts.firstNotNullOfOrNull {
+                parseCompactCount(it).takeIf { n -> n > 0 && "view" in it }
+            } ?: 0L,
+        )
+    }
+
+    // -------------------------------------------------------------- channel
+
+    /** Channel page header + metadata from a browse response. */
+    fun parseChannelHeader(root: JSONObject): ChannelRef? {
+        val header = root.optJSONObject("header")?.optJSONObject("pageHeaderRenderer") ?: return null
+        val viewModel = header.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
+        val metadataRows = viewModel?.optJSONObject("metadata")
+            ?.optJSONObject("contentMetadataViewModel")
+            ?.optJSONArray("metadataRows")
+            ?: return null
+        val parts = mutableListOf<String>()
+        for (i in 0 until metadataRows.length()) {
+            val row = metadataRows.optJSONObject(i) ?: continue
+            val rowParts = row.optJSONArray("metadataParts") ?: continue
+            for (j in 0 until rowParts.length()) {
+                rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
+            }
+        }
+        val id = root.optJSONObject("metadata")
+            ?.optJSONObject("channelMetadataRenderer")
+            ?.optString("externalId")
+            ?.takeIf { it.isNotBlank() }
+            ?: root.optJSONObject("contents")
+                ?.optJSONObject("twoColumnBrowseResultsRenderer")
+                ?.optJSONArray("tabs")
+                ?.optJSONObject(0)
+                ?.optJSONObject("tabRenderer")
+                ?.optJSONObject("endpoint")
+                ?.optJSONObject("browseEndpoint")
+                ?.optString("browseId")
+                ?.takeIf { it.startsWith("UC") }
+            ?: parts.firstNotNullOfOrNull { idFromText(it) }
+            ?: return null
+        val avatar = viewModel?.optJSONObject("image")
+            ?.optJSONObject("decoratedAvatarViewModel")
+            ?.optJSONObject("avatar")
+            ?.optJSONObject("avatarViewModel")
+            ?.optJSONObject("image")
+        val description = viewModel?.optJSONObject("description")
+            ?.optJSONObject("descriptionPreviewViewModel")
+            ?.optJSONObject("description")
+        return ChannelRef(
+            id = id,
+            name = runsText(viewModel?.optJSONObject("title")) ?: runsText(header.optJSONObject("pageTitle")) ?: id,
+            url = channelUrl(id),
+            avatarUrl = sourcesBest(avatar),
+            subscriberCount = parts.firstNotNullOfOrNull {
+                parseCompactCount(it).takeIf { n -> n > 0 && "subscriber" in it }
+            } ?: 0L,
+            description = runsText(description),
+        )
+    }
+
+    /** Channel tabs (Videos, Shorts, Live, Playlists, ...) with their params. */
+    fun channelTabs(root: JSONObject): List<Pair<String, String>> {
+        val tabs = root.optJSONObject("contents")
+            ?.optJSONObject("twoColumnBrowseResultsRenderer")
+            ?.optJSONArray("tabs")
+            ?: return emptyList()
+        return buildList {
+            for (i in 0 until tabs.length()) {
+                val tab = tabs.optJSONObject(i)?.optJSONObject("tabRenderer") ?: continue
+                val title = tab.optString("title")
+                val params = tab.optJSONObject("endpoint")
+                    ?.optJSONObject("browseEndpoint")
+                    ?.optString("params")
+                if (title.isNotBlank() && !params.isNullOrBlank()) add(title to params)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- playlist
+
+    /** Playlist header + metadata from a browse response. */
+    fun parsePlaylistHeader(root: JSONObject, fallbackId: String? = null): PlaylistRef? {
+        val header = root.optJSONObject("header")?.optJSONObject("pageHeaderRenderer") ?: return null
+        val viewModel = header.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
+        val metadataRows = viewModel?.optJSONObject("metadata")
+            ?.optJSONObject("contentMetadataViewModel")
+            ?.optJSONArray("metadataRows")
+        val parts = mutableListOf<String>()
+        metadataRows?.let { rows ->
+            for (i in 0 until rows.length()) {
+                val row = rows.optJSONObject(i) ?: continue
+                val rowParts = row.optJSONArray("metadataParts") ?: continue
+                for (j in 0 until rowParts.length()) {
+                    rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
+                }
+            }
+        }
+        val id = root.optJSONObject("metadata")
+            ?.optJSONObject("playlistMetadataRenderer")
+            ?.optString("playlistId")
+            ?.takeIf { it.isNotBlank() }
+            ?: findPlaylistId(root)
+            ?: fallbackId
+            ?: return null
+        val image = viewModel?.optJSONObject("heroImage")
+            ?.optJSONObject("contentPreviewImageViewModel")
+            ?.optJSONObject("image")
+        return PlaylistRef(
+            id = id,
+            name = runsText(viewModel?.optJSONObject("title")) ?: runsText(header.optJSONObject("pageTitle")) ?: id,
+            url = playlistUrl(id),
+            thumbnailUrl = sourcesBest(image),
+            uploaderName = parts.firstOrNull { isOwnerText(it) },
+            streamCount = parts.firstNotNullOfOrNull {
+                val n = parseViewCount(it)
+                if (n > 0 && (it.contains("video", true) || it.contains("song", true))) n else null
+            } ?: 0L,
+        )
+    }
+
+    private fun findPlaylistId(root: JSONObject): String? {
+        val id = findFirstString(root, "playlistId") ?: return null
+        return id.takeIf { it.startsWith("PL") || it.startsWith("VL") }
+    }
+
+    /** First String value found in depth-first order (e.g. "playlistId": "PL.."). */
+    private fun findFirstString(root: JSONObject?, key: String): String? {
+        if (root == null) return null
+        (root.opt(key) as? String)?.takeIf { it.isNotBlank() }?.let { return it }
+        for (k in root.keys()) {
+            val v = root.opt(k) ?: continue
+            when (v) {
+                is JSONObject -> findFirstString(v, key)?.let { return it }
+                is JSONArray -> for (i in 0 until v.length()) {
+                    v.optJSONObject(i)?.let { findFirstString(it, key) }?.let { return it }
+                }
+            }
+        }
+        return null
+    }
+
+    // --------------------------------------------------------------- player
+
+    /** Player response -> full [StreamInfo] for playback & downloads. */
+    fun parseStreamInfo(root: JSONObject, videoId: String): StreamInfo {
+        val status = root.optJSONObject("playabilityStatus")
+        if (status?.optString("status") != "OK") {
+            val reason = runsText(status?.optJSONObject("reason"))
+                ?: runsText(status?.optJSONObject("errorScreen")
+                    ?.optJSONObject("playerErrorMessageRenderer")
+                    ?.optJSONObject("subreason"))
+                ?: status?.optString("reason")
+                ?: "Video unavailable"
+            throw IOException(reason)
+        }
+        val details = root.optJSONObject("videoDetails") ?: JSONObject()
+        val id = details.optString("videoId").ifBlank { videoId }
+        val isLive = details.optBoolean("isLiveContent") || details.optBoolean("isLive")
+        val streaming = root.optJSONObject("streamingData")
+
+        val progressive = mutableListOf<StreamFormat>()
+        val videoOnly = mutableListOf<StreamFormat>()
+        val audioOnly = mutableListOf<StreamFormat>()
+        streaming?.optJSONArray("formats")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                parseFormat(arr.optJSONObject(i))?.let { progressive += it }
+            }
+        }
+        streaming?.optJSONArray("adaptiveFormats")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val f = parseFormat(arr.optJSONObject(i)) ?: continue
+                when {
+                    f.hasVideo && f.hasAudio -> progressive += f
+                    f.hasVideo -> videoOnly += f
+                    else -> audioOnly += f
+                }
+            }
+        }
+
+        val captions = root.optJSONObject("captions")
+            ?.optJSONObject("playerCaptionsTracklistRenderer")
+            ?.optJSONArray("captionTracks")
+            ?: JSONArray()
+        val subtitles = buildList {
+            for (i in 0 until captions.length()) {
+                val t = captions.optJSONObject(i) ?: continue
+                val base = t.optString("baseUrl").takeIf { it.isNotBlank() } ?: continue
+                val kind = t.optString("kind")
+                add(
+                    SubtitleTrack(
+                        url = toVttUrl(base),
+                        languageTag = t.optString("languageCode").ifBlank { null },
+                        name = t.optJSONObject("name")?.let { runsText(it) },
+                        isAutoGenerated = kind == "asr" || kind == "ocr",
+                    ),
+                )
+            }
+        }
+
+        val streamType = when {
+            isLive -> StreamType.LIVE
+            progressive.isEmpty() && audioOnly.isNotEmpty() && videoOnly.isEmpty() -> StreamType.AUDIO
+            else -> StreamType.NORMAL
+        }
+        return StreamInfo(
+            id = id,
+            title = details.optString("title").ifBlank { id },
+            url = watchUrl(id),
+            thumbnailUrl = sourcesBest(details.optJSONObject("thumbnail")),
+            uploaderName = details.optString("author").ifBlank { null },
+            uploaderUrl = details.optString("channelId").takeIf { it.isNotBlank() }?.let { channelUrl(it) },
+            duration = details.optString("lengthSeconds").toLongOrNull() ?: 0L,
+            viewCount = details.optString("viewCount").toLongOrNull() ?: 0L,
+            streamType = streamType,
+            videoStreams = progressive,
+            videoOnlyStreams = videoOnly,
+            audioStreams = audioOnly,
+            dashMpdUrl = streaming?.optString("dashManifestUrl").orEmpty().ifBlank { null },
+            hlsUrl = streaming?.optString("hlsManifestUrl").orEmpty().ifBlank { null },
+            subtitles = subtitles,
+        )
+    }
+
+    private fun parseFormat(o: JSONObject?): StreamFormat? {
+        if (o == null) return null
+        // All ANDROID client formats come pre-signed as plain URLs.
+        val url = o.optString("url").takeIf { it.isNotBlank() } ?: return null
+        val mime = o.optString("mimeType").ifBlank { "video/mp4" }
+        val codecs = mime.substringAfter("codecs=\"").substringBefore("\"")
+            .split(',').map { it.trim().lowercase() }
+        return StreamFormat(
+            url = url,
+            itag = o.optInt("itag"),
+            mimeType = mime,
+            suffix = suffixOf(mime, codecs),
+            bitrate = o.optInt("bitrate"),
+            width = o.optInt("width"),
+            height = o.optInt("height"),
+            audioQuality = o.optString("audioQuality").ifBlank { null },
+            approxDurationMs = o.optString("approxDurationMs").ifBlank { null },
+            hasVideo = codecs.any { it in VIDEO_CODECS },
+            hasAudio = codecs.any { it in AUDIO_CODECS },
+        )
+    }
+
+    private fun suffixOf(mime: String, codecs: List<String>): String {
+        val container = mime.substringBefore(';').trim()
+        if (container.startsWith("audio/")) {
+            return when {
+                codecs.any { it == "opus" } -> "opus"
+                container == "audio/mp4" -> "m4a"
+                container == "audio/mpeg" -> "mp3"
+                else -> "webm"
+            }
+        }
+        return if (container == "video/mp4") "mp4" else "webm"
+    }
+
+    /** Subtitle URLs carry fmt=srv3; rewrite to plain VTT (confirmed to work). */
+    private fun toVttUrl(url: String): String {
+        val withVtt = Regex("(fmt=|format=)srv3").replace(url, "\$1vtt")
+        return if (withVtt != url) withVtt else "$url&fmt=vtt"
+    }
+
+    // -------------------------------------------------------------- helpers
+
+    private const val VIDEO_CODECS =
+        "avc1,avc3,vp9,vp09,av01,av1,hvc1,hev1,mp4v,hevc,avc"
+    private const val AUDIO_CODECS =
+        "mp4a,opus,vorbis,ac-3,ec-3,mp3,flac,m4a,amr,aac"
+
+    private fun watchUrl(videoId: String) = "https://www.youtube.com/watch?v=$videoId"
+    private fun channelUrl(channelId: String) = "https://www.youtube.com/channel/$channelId"
+    private fun playlistUrl(playlistId: String) =
+        "https://www.youtube.com/playlist?list=$playlistId"
+
+    private fun isLiveRenderer(o: JSONObject): Boolean {
+        if (o.optBoolean("isLive")) return true
+        val badges = o.optJSONArray("badges") ?: return false
+        for (i in 0 until badges.length()) {
+            val label = badges.optJSONObject(i)
+                ?.optJSONObject("metadataBadgeRenderer")
+                ?.optString("label")
+            if (label?.contains("LIVE", ignoreCase = true) == true) return true
+        }
+        return false
+    }
+
+    private fun uploaderUrlFrom(endpoint: JSONObject?): String? {
+        val url = endpoint?.optJSONObject("commandMetadata")
+            ?.optJSONObject("webCommandMetadata")
+            ?.optString("url")
+            ?: return null
+        if (url.startsWith("/")) return "https://www.youtube.com$url"
+        return url
+    }
+
+    private fun metadataRows(meta: JSONObject): List<String> {
+        val rows = meta.optJSONObject("metadata")
+            ?.optJSONObject("contentMetadataViewModel")
+            ?.optJSONArray("metadataRows")
+            ?: return emptyList()
+        return buildList {
+            for (i in 0 until rows.length()) {
+                val row = rows.optJSONObject(i) ?: continue
+                val parts = row.optJSONArray("metadataParts") ?: continue
+                for (j in 0 until parts.length()) {
+                    parts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(::add)
+                }
+            }
+        }
+    }
+
+    private fun ownerFromRows(rows: List<String>): Pair<String?, String?> {
+        val owner = rows.firstOrNull { row ->
+            !isDateText(row) &&
+                !Regex("\\d").containsMatchIn(row) &&
+                row.length in 1..60
+        }
+        return owner to null
+    }
+
+    private fun durationBadge(o: JSONObject): String? {
+        val overlays = o.optJSONObject("contentImage")
+            ?.optJSONObject("thumbnailViewModel")
+            ?.optJSONArray("overlays")
+            ?: return null
+        for (i in 0 until overlays.length()) {
+            val badges = overlays.optJSONObject(i)
+                ?.optJSONObject("thumbnailBottomOverlayViewModel")
+                ?.optJSONArray("badges")
+                ?: continue
+            for (j in 0 until badges.length()) {
+                val text = badges.optJSONObject(j)
+                    ?.optJSONObject("thumbnailBadgeViewModel")
+                    ?.optString("text")
+                    ?.takeIf { it.contains(':') }
+                    ?: continue
+                return text
+            }
+        }
+        return null
+    }
+
+    private fun isDateText(text: String): Boolean =
+        Regex("(ago|day|week|month|year|hour|minute)", RegexOption.IGNORE_CASE).containsMatchIn(text)
+
+    private fun isOwnerText(text: String): Boolean =
+        text.startsWith("@") || text.length < 60 && !Regex("\\d").containsMatchIn(text)
+
+    private fun idFromText(text: String): String? =
+        Regex("UC[\\w-]{22}").find(text)?.value
+}
