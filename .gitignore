@@ -13,3 +13,7 @@ app/build
 *.apk
 *.aab
 .freebuff
+
+# Agent/tool scratch (opencode skills)
+.agents/
+skills-lock.json
