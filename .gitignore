@@ -17,3 +17,4 @@ app/build
 # Agent/tool scratch (opencode skills)
 .agents/
 skills-lock.json
+.claude/
