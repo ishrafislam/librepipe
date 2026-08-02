@@ -7,9 +7,10 @@ LibrePipe — single-module Android app (`:app`), Kotlin + Jetpack Compose (Mate
 - Typecheck (fast, use after any code change): `./gradlew :app:compileDebugKotlin`
 - Full build: `./gradlew :app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk`
 - Lint: `./gradlew :app:lintDebug` — `abortOnError = false`, never blocks; still worth reviewing
-- There are NO unit or instrumented tests and no CI. Don't invent a test command; verification is compile + lint + (optionally) manual run on an emulator.
+- Unit tests (Parsers only): `./gradlew :app:testDebugUnitTest` — JUnit 4 against **live API fixtures** in `app/src/test/resources/fixtures/` (captured 2026-08-02, one per response shape: legacy `videoRenderer`, `lockupViewModel`, `playlistHeaderRenderer` classic + `pageHeaderRenderer` new, ANDROID player, WEB_REMIX music, empty anonymous home feed). Expected values are hardcoded from the fixtures at capture time; re-capture a fixture and update the assertions when YouTube drifts. There are no instrumented tests and no CI.
+- Tests need `org.json:json` on the test classpath (`testImplementation(libs.orgjson)`) — android.jar's org.json stubs throw in host JVM tests. Do NOT add it to main; `org.json` is Android's built-in.
 - JDK 21 is installed; Gradle toolchain targets Java 17. Core library desugaring is enabled — keep it for `java.time`/`java.util.function` on minSdk 26.
-- Add dependencies via `gradle/libs.versions.toml` (version catalog), never inline. `org.json` is Android's built-in — do not add a JSON library.
+- Add dependencies via `gradle/libs.versions.toml` (version catalog), never inline.
 - JDK versions: AGP 8.13.2, Kotlin 2.3.10, KSP 2.3.10 (Room codegen).
 
 ## Architecture (hard-earned, not obvious)
@@ -30,6 +31,7 @@ LibrePipe — single-module Android app (`:app`), Kotlin + Jetpack Compose (Mate
 
 - `Extractor.trending()` returns an **empty list for anonymous users** — YouTube removed the global trending kiosk; it now maps to the personalized `FEwhat_to_watch` feed. HomeViewModel handles empties.
 - Channel "Videos" tab items have `uploaderName = null` — the new `lockupViewModel` layout omits the uploader row on a channel's own videos.
+- `parseMusicItem` uploaderName is the type label ("Song") — WEB_REMIX search lists prepend the type to the artist column; recognized as cosmetic.
 - `lint { abortOnError = false }` in `app/build.gradle.kts` is intentional.
 
 ## If extraction breaks (API drift)
