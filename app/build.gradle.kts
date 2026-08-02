@@ -113,4 +113,7 @@ dependencies {
 
     // Core library desugaring (java.time / java.util.function on minSdk < 26)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.orgjson)
 }

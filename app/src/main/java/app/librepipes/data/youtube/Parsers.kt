@@ -30,6 +30,17 @@ object Parsers {
         }.takeIf { it.isNotBlank() }
     }
 
+    /** pageHeaderViewModel title may be {"content":..} or {"dynamicTextViewModel":{"text":{"content":..}}}. */
+    fun pageTitle(vm: JSONObject?): String? {
+        if (vm == null) return null
+        runsText(vm.optJSONObject("title"))?.let { return it }
+        return runsText(
+            vm.optJSONObject("title")
+                ?.optJSONObject("dynamicTextViewModel")
+                ?.optJSONObject("text")
+        )
+    }
+
     /** Best (largest) thumbnail URL from a {"thumbnails":[..]} / {"sources":[..]} array. */
     fun sourcesBest(o: JSONObject?): String? {
         if (o == null) return null
@@ -300,7 +311,7 @@ object Parsers {
                     rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
                 }
             }
-            name = runsText(viewModel?.optJSONObject("title"))
+            name = pageTitle(viewModel)
                 ?: pageHeader.optString("pageTitle").takeIf { it.isNotBlank() }
                 ?: return null
             avatar = viewModel?.optJSONObject("image")
@@ -402,7 +413,7 @@ object Parsers {
                     }
                 }
             }
-            name = runsText(viewModel?.optJSONObject("title"))
+            name = pageTitle(viewModel)
                 ?: pageHeader.optString("pageTitle").takeIf { it.isNotBlank() }
                 ?: fallbackId
                 ?: return null
@@ -552,10 +563,14 @@ object Parsers {
             height = o.optInt("height"),
             audioQuality = o.optString("audioQuality").ifBlank { null },
             approxDurationMs = o.optString("approxDurationMs").ifBlank { null },
-            hasVideo = codecs.any { it in VIDEO_CODECS },
-            hasAudio = codecs.any { it in AUDIO_CODECS },
+            hasVideo = codecs.any { c -> c.isCodec(VIDEO_CODECS) },
+            hasAudio = codecs.any { c -> c.isCodec(AUDIO_CODECS) },
         )
     }
+
+    /** "avc1.42001e" matches codec family "avc1" (dotted profile suffixes stripped). */
+    private fun String.isCodec(family: String): Boolean =
+        substringBefore('.').let { base -> family.split(',').any { it == base } }
 
     private fun suffixOf(mime: String, codecs: List<String>): String {
         val container = mime.substringBefore(';').trim()
