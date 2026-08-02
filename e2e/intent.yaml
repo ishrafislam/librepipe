@@ -1,0 +1,13 @@
+appId: app.librepipes
+name: Open YouTube link via VIEW intent
+---
+- openLink: "https://youtu.be/xT8oP0wy-A0"
+- extendedWaitUntil:
+    visible: "Kotlin in 100 Seconds"
+    timeout: 20000
+- takeScreenshot: e2e/intent_opened
+- pressKey: Back
+- pressKey: Back
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 10000

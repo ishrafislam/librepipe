@@ -1,0 +1,25 @@
+appId: app.librepipes
+name: Video playback
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Search"
+- tapOn: "Search YouTube or YouTube Music|.*seconds.*"
+- runFlow:
+    when:
+      visible: "Clear"
+    commands:
+      - tapOn: "Clear"
+- inputText: "kotlin in 100 seconds"
+- tapOn: "Videos"
+- extendedWaitUntil:
+    visible: ".*Kotlin in 100 Seconds.*|.*views.*"
+    timeout: 25000
+- takeScreenshot: e2e/results_ready
+- tapOn:
+    text: ".*Kotlin in 100 Seconds.*"
+    index: 1
+- extendedWaitUntil:
+    visible: "Kotlin in 100 Seconds"
+    timeout: 30000
+- takeScreenshot: e2e/player_opened

@@ -1,0 +1,32 @@
+appId: app.librepipes
+name: Channel page and pagination
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Search"
+- tapOn:
+    point: "50%,15%"
+- runFlow:
+    when:
+      visible: "Clear"
+    commands:
+      - tapOn: "Clear"
+- inputText: "fireship"
+- tapOn: "Channels"
+- extendedWaitUntil:
+    visible: ".*Fireship.*"
+    timeout: 25000
+- tapOn:
+    text: "Fireship"
+    index: 0
+- extendedWaitUntil:
+    visible: "Videos"
+    timeout: 20000
+- tapOn: "Videos"
+- extendedWaitUntil:
+    visible: ".*views.*"
+    timeout: 25000
+- takeScreenshot: e2e/channel_videos
+- scroll
+- scroll
+- takeScreenshot: e2e/channel_videos_scrolled

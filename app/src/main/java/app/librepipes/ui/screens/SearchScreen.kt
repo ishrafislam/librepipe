@@ -149,7 +149,7 @@ fun SearchScreen(
 
             else -> {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                    items(items, key = { it.itemKey }) { item ->
+                    items(items, key = { it.key() }) { item ->
                         when (item) {
                             is Extractor.SearchItem.Video -> VideoRow(
                                 ref = item.stream,
@@ -198,11 +198,4 @@ private val Extractor.SearchFilter.label: String
         Extractor.SearchFilter.CHANNELS -> "Channels"
         Extractor.SearchFilter.PLAYLISTS -> "Playlists"
         Extractor.SearchFilter.MUSIC -> "Music"
-    }
-
-private val Extractor.SearchItem.itemKey: String
-    get() = when (this) {
-        is Extractor.SearchItem.Video -> "v-${stream.id}"
-        is Extractor.SearchItem.Channel -> "c-${channel.id}"
-        is Extractor.SearchItem.Playlist -> "p-${playlist.id}"
     }

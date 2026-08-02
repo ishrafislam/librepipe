@@ -1,0 +1,21 @@
+appId: app.librepipes
+name: Search results and pagination
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Search"
+- tapOn: "Search YouTube or YouTube Music|.*android.*kotlin.*"
+- runFlow:
+    when:
+      visible: "Clear"
+    commands:
+      - tapOn: "Clear"
+- inputText: "android development"
+- tapOn: "Videos"
+- extendedWaitUntil:
+    visible: "Videos"
+    timeout: 15000
+- takeScreenshot: e2e/search_results
+- scroll
+- scroll
+- takeScreenshot: e2e/search_scrolled

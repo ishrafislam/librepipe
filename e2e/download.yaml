@@ -1,0 +1,37 @@
+appId: app.librepipes
+name: Download video and verify in Library
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Search"
+- tapOn: "Search YouTube or YouTube Music|.*seconds.*"
+- runFlow:
+    when:
+      visible: "Clear"
+    commands:
+      - tapOn: "Clear"
+- inputText: "kotlin in 100 seconds"
+- tapOn: "Videos"
+- extendedWaitUntil:
+    visible: ".*Kotlin in 100 Seconds.*"
+    timeout: 20000
+- tapOn:
+    text: ".*Kotlin in 100 Seconds.*"
+    index: 1
+- extendedWaitUntil:
+    visible: "Kotlin in 100 Seconds"
+    timeout: 15000
+- tapOn:
+    text: "Download"
+- waitForAnimationToEnd
+- pressKey: Back
+- pressKey: Back
+- tapOn: "Library"
+- tapOn: "Downloads"
+- extendedWaitUntil:
+    visible: ".*Kotlin in 100 Seconds.*"
+    timeout: 30000
+- extendedWaitUntil:
+    visible: ".*Done.*|.*Failed.*"
+    timeout: 60000
+- takeScreenshot: e2e/downloads_library

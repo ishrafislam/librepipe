@@ -1,0 +1,33 @@
+appId: app.librepipes
+name: Verify filter tab content
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Search"
+- tapOn: "Search YouTube or YouTube Music|.*android.*kotlin.*"
+- runFlow:
+    when:
+      visible: "Clear"
+    commands:
+      - tapOn: "Clear"
+- inputText: "coding"
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: "Videos"
+    timeout: 15000
+- tapOn: "Videos"
+- extendedWaitUntil:
+    notVisible:
+      text: ".*Loading.*"
+    timeout: 15000
+- waitForAnimationToEnd
+- takeScreenshot: e2e/tab_videos
+- tapOn: "Channels"
+- waitForAnimationToEnd
+- takeScreenshot: e2e/tab_channels
+- tapOn: "Playlists"
+- waitForAnimationToEnd
+- takeScreenshot: e2e/tab_playlists
+- tapOn: "Music"
+- waitForAnimationToEnd
+- takeScreenshot: e2e/tab_music

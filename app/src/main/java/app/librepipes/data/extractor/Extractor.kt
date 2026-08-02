@@ -49,6 +49,12 @@ object Extractor {
         data class Video(val stream: StreamRef) : SearchItem
         data class Channel(val channel: ChannelRef) : SearchItem
         data class Playlist(val playlist: PlaylistRef) : SearchItem
+
+        fun key(): String = when (this) {
+            is Video -> "v-${stream.id}"
+            is Channel -> "c-${channel.id}"
+            is Playlist -> "p-${playlist.id}"
+        }
     }
 
     class SearchFeed internal constructor(
@@ -58,9 +64,16 @@ object Extractor {
         initialItems: List<SearchItem>,
         private var nextToken: String?,
     ) {
-        val items = mutableListOf<SearchItem>().apply { addAll(initialItems) }
+        val items = mutableListOf<SearchItem>()
         var hasMore = true
             private set
+
+        init {
+            val seen = HashSet<String>()
+            for (item in initialItems) {
+                if (seen.add(item.key())) items += item
+            }
+        }
 
         /** Kept for API compatibility; the initial page loads eagerly in [Extractor.search]. */
         suspend fun loadInitial() = Unit
@@ -78,7 +91,10 @@ object Extractor {
 
         private fun consume(page: JSONObject) {
             val parsed = parseSearchPage(page)
-            items += parsed.items
+            val seen = items.mapTo(HashSet()) { it.key() }
+            for (item in parsed.items) {
+                if (seen.add(item.key())) items += item
+            }
             nextToken = parsed.nextToken
             if (nextToken == null) hasMore = false
         }
@@ -140,9 +156,16 @@ object Extractor {
         val channel: ChannelRef,
         initialVideos: List<StreamRef>,
     ) {
-        val videos = mutableListOf<StreamRef>().apply { addAll(initialVideos) }
+        val videos = mutableListOf<StreamRef>()
         var hasMore = true
             private set
+
+        init {
+            val seen = HashSet<String>()
+            for (video in initialVideos) {
+                if (seen.add(video.id)) videos += video
+            }
+        }
 
         /** Kept for API compatibility; initial page loads eagerly in [Extractor.channel]. */
         suspend fun loadInitial() = Unit
@@ -155,9 +178,10 @@ object Extractor {
         }
 
         private fun consume(page: JSONObject) {
+            val seen = videos.mapTo(HashSet()) { it.id }
             for (r in Parsers.findAll(page, "lockupViewModel")) {
                 if (r.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
-                    Parsers.parseLockupVideo(r)?.let { videos += it }
+                    Parsers.parseLockupVideo(r)?.let { v -> if (seen.add(v.id)) videos += v }
                 }
             }
             nextToken = Parsers.continuationToken(page)
@@ -194,9 +218,16 @@ object Extractor {
         val playlist: PlaylistRef,
         initialVideos: List<StreamRef>,
     ) {
-        val videos = mutableListOf<StreamRef>().apply { addAll(initialVideos) }
+        val videos = mutableListOf<StreamRef>()
         var hasMore = true
             private set
+
+        init {
+            val seen = HashSet<String>()
+            for (video in initialVideos) {
+                if (seen.add(video.id)) videos += video
+            }
+        }
 
         /** Kept for API compatibility; initial page loads eagerly in [Extractor.playlist]. */
         suspend fun loadInitial() = Unit
@@ -209,9 +240,10 @@ object Extractor {
         }
 
         private fun consume(page: JSONObject) {
+            val seen = videos.mapTo(HashSet()) { it.id }
             for (r in Parsers.findAll(page, "lockupViewModel")) {
                 if (r.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
-                    Parsers.parseLockupVideo(r)?.let { videos += it }
+                    Parsers.parseLockupVideo(r)?.let { v -> if (seen.add(v.id)) videos += v }
                 }
             }
             nextToken = Parsers.continuationToken(page)

@@ -268,26 +268,58 @@ object Parsers {
 
     // -------------------------------------------------------------- channel
 
-    /** Channel page header + metadata from a browse response. */
+    /** Channel page header + metadata from a browse response (classic + new layouts). */
     fun parseChannelHeader(root: JSONObject): ChannelRef? {
-        val header = root.optJSONObject("header")?.optJSONObject("pageHeaderRenderer") ?: return null
-        val viewModel = header.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
-        val metadataRows = viewModel?.optJSONObject("metadata")
-            ?.optJSONObject("contentMetadataViewModel")
-            ?.optJSONArray("metadataRows")
-            ?: return null
+        val header = root.optJSONObject("header") ?: return null
+        val classic = header.optJSONObject("c4TabbedHeaderRenderer")
+        val pageHeader = header.optJSONObject("pageHeaderRenderer")
+        if (classic == null && pageHeader == null) return null
+
+        val name: String
         val parts = mutableListOf<String>()
-        for (i in 0 until metadataRows.length()) {
-            val row = metadataRows.optJSONObject(i) ?: continue
-            val rowParts = row.optJSONArray("metadataParts") ?: continue
-            for (j in 0 until rowParts.length()) {
-                rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
+        val avatar: JSONObject?
+        val description: String?
+
+        if (classic != null) {
+            name = runsText(classic.optJSONObject("title"))
+                ?: classic.optString("title").takeIf { it.isNotBlank() }
+                ?: return null
+            runsText(classic.optJSONObject("subscriberCountText"))?.let(parts::add)
+            avatar = classic.optJSONObject("avatar")
+            description = runsText(classic.optJSONObject("description"))
+        } else {
+            val viewModel = pageHeader.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
+            val metadataRows = viewModel?.optJSONObject("metadata")
+                ?.optJSONObject("contentMetadataViewModel")
+                ?.optJSONArray("metadataRows")
+                ?: return null
+            for (i in 0 until metadataRows.length()) {
+                val row = metadataRows.optJSONObject(i) ?: continue
+                val rowParts = row.optJSONArray("metadataParts") ?: continue
+                for (j in 0 until rowParts.length()) {
+                    rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
+                }
             }
+            name = runsText(viewModel?.optJSONObject("title"))
+                ?: pageHeader.optString("pageTitle").takeIf { it.isNotBlank() }
+                ?: return null
+            avatar = viewModel?.optJSONObject("image")
+                ?.optJSONObject("decoratedAvatarViewModel")
+                ?.optJSONObject("avatar")
+                ?.optJSONObject("avatarViewModel")
+                ?.optJSONObject("image")
+            description = runsText(
+                viewModel?.optJSONObject("description")
+                    ?.optJSONObject("descriptionPreviewViewModel")
+                    ?.optJSONObject("description")
+            )
         }
+
         val id = root.optJSONObject("metadata")
             ?.optJSONObject("channelMetadataRenderer")
             ?.optString("externalId")
             ?.takeIf { it.isNotBlank() }
+            ?: classic?.optString("channelId")?.takeIf { it.isNotBlank() }
             ?: root.optJSONObject("contents")
                 ?.optJSONObject("twoColumnBrowseResultsRenderer")
                 ?.optJSONArray("tabs")
@@ -299,23 +331,15 @@ object Parsers {
                 ?.takeIf { it.startsWith("UC") }
             ?: parts.firstNotNullOfOrNull { idFromText(it) }
             ?: return null
-        val avatar = viewModel?.optJSONObject("image")
-            ?.optJSONObject("decoratedAvatarViewModel")
-            ?.optJSONObject("avatar")
-            ?.optJSONObject("avatarViewModel")
-            ?.optJSONObject("image")
-        val description = viewModel?.optJSONObject("description")
-            ?.optJSONObject("descriptionPreviewViewModel")
-            ?.optJSONObject("description")
         return ChannelRef(
             id = id,
-            name = runsText(viewModel?.optJSONObject("title")) ?: runsText(header.optJSONObject("pageTitle")) ?: id,
+            name = name,
             url = channelUrl(id),
             avatarUrl = sourcesBest(avatar),
             subscriberCount = parts.firstNotNullOfOrNull {
                 parseCompactCount(it).takeIf { n -> n > 0 && "subscriber" in it }
             } ?: 0L,
-            description = runsText(description),
+            description = description,
         )
     }
 
@@ -339,38 +363,67 @@ object Parsers {
 
     // ------------------------------------------------------------- playlist
 
-    /** Playlist header + metadata from a browse response. */
+    /** Playlist header + metadata from a browse response (classic + new layouts). */
     fun parsePlaylistHeader(root: JSONObject, fallbackId: String? = null): PlaylistRef? {
-        val header = root.optJSONObject("header")?.optJSONObject("pageHeaderRenderer") ?: return null
-        val viewModel = header.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
-        val metadataRows = viewModel?.optJSONObject("metadata")
-            ?.optJSONObject("contentMetadataViewModel")
-            ?.optJSONArray("metadataRows")
+        val header = root.optJSONObject("header") ?: return null
+        val classic = header.optJSONObject("playlistHeaderRenderer")
+        val pageHeader = header.optJSONObject("pageHeaderRenderer")
+        if (classic == null && pageHeader == null) return null
+
+        val name: String
         val parts = mutableListOf<String>()
-        metadataRows?.let { rows ->
-            for (i in 0 until rows.length()) {
-                val row = rows.optJSONObject(i) ?: continue
-                val rowParts = row.optJSONArray("metadataParts") ?: continue
-                for (j in 0 until rowParts.length()) {
-                    rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
+        val thumbnail: JSONObject?
+
+        if (classic != null) {
+            name = runsText(classic.optJSONObject("title"))
+                ?: classic.optString("title").takeIf { it.isNotBlank() }
+                ?: fallbackId
+                ?: return null
+            runsText(classic.optJSONObject("ownerText"))?.let(parts::add)
+            classic.optJSONArray("stats")?.let { stats ->
+                for (i in 0 until stats.length()) {
+                    runsText(stats.optJSONObject(i))?.let(parts::add)
                 }
             }
+            thumbnail = classic.optJSONObject("playlistHeaderBanner")
+                ?.optJSONObject("heroPlaylistThumbnailRenderer")
+                ?.optJSONObject("thumbnail")
+        } else {
+            val viewModel = pageHeader.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
+            val metadataRows = viewModel?.optJSONObject("metadata")
+                ?.optJSONObject("contentMetadataViewModel")
+                ?.optJSONArray("metadataRows")
+            metadataRows?.let { rows ->
+                for (i in 0 until rows.length()) {
+                    val row = rows.optJSONObject(i) ?: continue
+                    val rowParts = row.optJSONArray("metadataParts") ?: continue
+                    for (j in 0 until rowParts.length()) {
+                        rowParts.optJSONObject(j)?.optJSONObject("text")?.let { runsText(it) }?.let(parts::add)
+                    }
+                }
+            }
+            name = runsText(viewModel?.optJSONObject("title"))
+                ?: pageHeader.optString("pageTitle").takeIf { it.isNotBlank() }
+                ?: fallbackId
+                ?: return null
+            thumbnail = viewModel?.optJSONObject("heroImage")
+                ?.optJSONObject("contentPreviewImageViewModel")
+                ?.optJSONObject("image")
         }
+
         val id = root.optJSONObject("metadata")
             ?.optJSONObject("playlistMetadataRenderer")
             ?.optString("playlistId")
             ?.takeIf { it.isNotBlank() }
+            ?: classic?.optString("playlistId")?.takeIf { it.isNotBlank() }
             ?: findPlaylistId(root)
             ?: fallbackId
             ?: return null
-        val image = viewModel?.optJSONObject("heroImage")
-            ?.optJSONObject("contentPreviewImageViewModel")
-            ?.optJSONObject("image")
         return PlaylistRef(
             id = id,
-            name = runsText(viewModel?.optJSONObject("title")) ?: runsText(header.optJSONObject("pageTitle")) ?: id,
+            name = name,
             url = playlistUrl(id),
-            thumbnailUrl = sourcesBest(image),
+            thumbnailUrl = sourcesBest(thumbnail),
             uploaderName = parts.firstOrNull { isOwnerText(it) },
             streamCount = parts.firstNotNullOfOrNull {
                 val n = parseViewCount(it)
