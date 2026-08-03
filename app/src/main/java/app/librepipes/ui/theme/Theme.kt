@@ -3,35 +3,18 @@ package app.librepipes.ui.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
-
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFFFFB4A9),
-    onPrimary = Color(0xFF690005),
-    primaryContainer = Color(0xFF93000A),
-    onPrimaryContainer = Color(0xFFFFDAD6),
-    secondary = Color(0xFFE7BDB6),
-    background = Color(0xFF14100F),
-    surface = Color(0xFF14100F),
-    surfaceVariant = Color(0xFF534341),
-)
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFFB3261E),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFDAD6),
-    onPrimaryContainer = Color(0xFF410002),
-    secondary = Color(0xFF77574C),
-    background = Color(0xFFFFF8F6),
-    surface = Color(0xFFFFF8F6),
-    surfaceVariant = Color(0xFFF5DEDA),
-)
+import app.librepipes.ui.theme.color.DarkColors
+import app.librepipes.ui.theme.color.DarkErrorRoles
+import app.librepipes.ui.theme.color.DarkExtended
+import app.librepipes.ui.theme.color.LightColors
+import app.librepipes.ui.theme.color.LightErrorRoles
+import app.librepipes.ui.theme.color.LightExtended
+import app.librepipes.ui.theme.color.LocalExtendedColors
 
 @Composable
 fun LibrePipeTheme(
@@ -39,17 +22,31 @@ fun LibrePipeTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
+    val context = LocalContext.current
+    val useDynamic = dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val base = when {
+        useDynamic -> if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         darkTheme -> DarkColors
         else -> LightColors
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        content = content,
+    // Semantic roles stay fixed when dynamic color overrides the wallpaper-derived tints
+    // (design board 02): error family, success and the player scrim never change.
+    val fixedError = if (darkTheme) DarkErrorRoles else LightErrorRoles
+    val colorScheme = base.copy(
+        error = fixedError.error,
+        onError = fixedError.onError,
+        errorContainer = fixedError.errorContainer,
+        onErrorContainer = fixedError.onErrorContainer,
     )
+    val extended = if (darkTheme) DarkExtended else LightExtended
+
+    CompositionLocalProvider(LocalExtendedColors provides extended) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            shapes = ShapeScheme,
+            content = content,
+        )
+    }
 }

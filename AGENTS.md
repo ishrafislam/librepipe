@@ -26,6 +26,9 @@ LibrePipe — single-module Android app (`:app`), Kotlin + Jetpack Compose (Mate
 - DI is a hand-rolled `AppContainer` (no Hilt): `(applicationContext as LibrePipeApp).container`.
 - Room: `AppDatabase` has `exportSchema = false` and `fallbackToDestructiveMigration()` — schema changes silently wipe user data; bump `version` and add a real migration for anything user-facing.
 - Channel URLs may be `@handle` style; `Innertube.resolveChannelId()` resolves via HTML as fallback.
+- **Design tokens live in `ui/theme/`** (source of truth: `design/Librepipe 01 Foundations.dc.html`, gitignored): `color/Light.kt`+`Dark.kt` (board hexes — everything not on the board was derived per M3 conventions), `color/ExtendedColors.kt` (success + player scrim, outside M3's ColorScheme), `Typography.kt` (IBM Plex Sans all roles, Plex Mono `numeric` with `tnum`), `Shape.kt`, `Spacing.kt` (nine values only), `Motion.kt` (≤500ms, board easings). Fonts are bundled in `res/font/` (OFL-1.1, license in `res/raw/plex_ofl.txt`) — never swap to runtime font loading.
+- **Dynamic color**: `LibrePipeTheme` defaults `dynamicColor = true`; after `dynamic{Light,Dark}ColorScheme(context)` it copies the **fixed** error family back (board 02: "semantic roles stay fixed"). success/playerScrim come from `LocalExtendedColors` and are always fixed. Board rule: at most one filled accent object per viewport.
+- Launcher icon is the brand mark (sky-blue circle `#4AA8E8` + white triangle) as pure vectors (`ic_launcher_foreground.xml`), `ic_launcher_monochrome.xml` for themed icons, `mipmap-anydpi-v33/` adds the monochrome layer. The mark never adopts dynamic color.
 
 ## Behavior that looks like bugs (don't "fix")
 
