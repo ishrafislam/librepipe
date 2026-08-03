@@ -3,7 +3,7 @@ name: Video playback
 ---
 - launchApp:
     stopApp: true
-- tapOn: "Search"
+- tapOn: "Search Librepipe"
 - tapOn: "Search YouTube or YouTube Music|.*seconds.*"
 - runFlow:
     when:
@@ -11,6 +11,7 @@ name: Video playback
     commands:
       - tapOn: "Clear"
 - inputText: "kotlin in 100 seconds"
+- pressKey: Enter
 - tapOn: "Videos"
 - extendedWaitUntil:
     visible: ".*Kotlin in 100 Seconds.*|.*views.*"

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Brand mark (design board 01) at UI size: sky-blue circle + white triangle. -->
+    <path
+        android:fillColor="#4AA8E8"
+        android:pathData="M54,0 A54,54 0 1 1 53.99,0 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42.75,34.31 L76.5,54 L42.75,73.69 Z" />
+</vector>

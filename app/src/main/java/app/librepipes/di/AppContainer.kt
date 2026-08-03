@@ -7,6 +7,7 @@ import app.librepipes.data.repo.DownloadRepository
 import app.librepipes.data.repo.GroupRepository
 import app.librepipes.data.repo.HistoryRepository
 import app.librepipes.data.repo.PlaylistRepository
+import app.librepipes.data.repo.SearchHistoryRepository
 import app.librepipes.data.repo.SubscriptionRepository
 import app.librepipes.download.DownloadManager
 import okhttp3.OkHttpClient
@@ -55,6 +56,10 @@ class AppContainer(context: Context) {
 
     val downloads: DownloadRepository by lazy {
         DownloadRepository(database.downloadDao())
+    }
+
+    val searchHistory: SearchHistoryRepository by lazy {
+        SearchHistoryRepository(database.searchHistoryDao())
     }
 
     val downloadManager: DownloadManager by lazy {

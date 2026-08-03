@@ -16,6 +16,15 @@ data class SubscriptionEntity(
     val latestStreamId: String?,
     val lastCheckedAt: Long,
     val addedAt: Long,
+    val lastVisitedAt: Long = 0L,
+)
+
+/** Locally stored search queries — never leave the device. */
+@Entity(tableName = "search_history")
+data class SearchHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val query: String,
+    val createdAt: Long,
 )
 
 @Entity(tableName = "groups")

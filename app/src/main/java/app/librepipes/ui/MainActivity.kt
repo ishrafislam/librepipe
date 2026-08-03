@@ -15,14 +15,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Subscriptions
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
@@ -35,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -50,7 +51,11 @@ import app.librepipes.LibrePipeApp
 import app.librepipes.data.model.StreamRef
 import app.librepipes.player.PlaybackOpener
 import app.librepipes.player.PopupLauncher
+import app.librepipes.ui.components.kit.LpBottomBar
+import app.librepipes.ui.components.kit.LpNavItem
 import app.librepipes.ui.screens.ChannelScreen
+import app.librepipes.ui.screens.DownloadsScreen
+import app.librepipes.ui.screens.HistoryScreen
 import app.librepipes.ui.screens.HomeScreen
 import app.librepipes.ui.screens.LibraryScreen
 import app.librepipes.ui.screens.LocalPlaylistScreen
@@ -60,6 +65,8 @@ import app.librepipes.ui.screens.SettingsScreen
 import app.librepipes.ui.screens.SubscriptionsScreen
 import app.librepipes.ui.theme.LibrePipeTheme
 import app.librepipes.ui.viewmodels.ChannelViewModel
+import app.librepipes.ui.viewmodels.DownloadsViewModel
+import app.librepipes.ui.viewmodels.HistoryViewModel
 import app.librepipes.ui.viewmodels.HomeViewModel
 import app.librepipes.ui.viewmodels.LibraryViewModel
 import app.librepipes.ui.viewmodels.LocalPlaylistViewModel
@@ -77,6 +84,8 @@ object Routes {
     const val LIBRARY = "library"
     const val SUBSCRIPTIONS = "subscriptions"
     const val SETTINGS = "settings"
+    const val HISTORY = "history"
+    const val DOWNLOADS = "downloads"
     const val CHANNEL = "channel/{url}"
     const val PLAYLIST = "playlist/{url}"
     const val LOCAL_PLAYLIST = "localplaylist/{id}"
@@ -101,12 +110,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             val app = application as LibrePipeApp
             val themePref by app.container.settings.theme.collectAsState(initial = 0)
+            val dynamicColorPref by app.container.settings.dynamicColor.collectAsState(initial = true)
             val darkTheme = when (themePref) {
                 1 -> false
                 2 -> true
                 else -> isSystemInDarkTheme()
             }
-            LibrePipeTheme(darkTheme = darkTheme) {
+            LibrePipeTheme(darkTheme = darkTheme, dynamicColor = dynamicColorPref) {
                 MainScreen(
                     deepLink = deepLink,
                     onRequestNotificationPermission = { requestNotificationPermission() },
@@ -157,6 +167,9 @@ private fun MainScreen(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
+    val app = context.applicationContext as LibrePipeApp
+    val unreadCount by app.container.subscriptions.observeUnreadCount().collectAsState(initial = 0)
+
     LaunchedEffect(deepLink) {
         if (deepLink != null) {
             handleDeepLink(context, deepLink, navController, scope)
@@ -172,6 +185,7 @@ private fun MainScreen(
     val playUri: (Uri, String) -> Unit = { uri, title ->
         scope.launch { PlaybackOpener.playUri(context, uri, title) }
     }
+    val openSearch: () -> Unit = { navController.navigate(Routes.SEARCH) }
 
     val onNavigate: (String) -> Unit = { route ->
         navController.navigate(route) {
@@ -181,16 +195,20 @@ private fun MainScreen(
         }
     }
 
+    val tabRoutes = listOf(Routes.HOME, Routes.SUBSCRIPTIONS, Routes.LIBRARY, Routes.SETTINGS)
+    val selectedIndex = tabRoutes.indexOf(currentRoute)
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
         if (wide) {
             Row(modifier = Modifier.fillMaxSize()) {
-                NavRail(currentRoute = currentRoute, onNavigate = onNavigate)
+                NavRail(currentRoute = currentRoute, onNavigate = onNavigate, unreadCount = unreadCount)
                 AppNavHost(
                     navController = navController,
                     openVideo = openVideo,
                     openChannel = openChannel,
                     openPlaylist = openPlaylist,
+                    openSearch = openSearch,
                     playUri = playUri,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                 )
@@ -198,7 +216,11 @@ private fun MainScreen(
         } else {
             Scaffold(
                 bottomBar = {
-                    NavBar(currentRoute = currentRoute, onNavigate = onNavigate)
+                    LpBottomBar(
+                        items = bottomNavItems(unreadCount),
+                        selectedIndex = selectedIndex,
+                        onSelect = { index -> onNavigate(tabRoutes[index]) },
+                    )
                 },
             ) { padding ->
                 AppNavHost(
@@ -207,6 +229,7 @@ private fun MainScreen(
                     openVideo = openVideo,
                     openChannel = openChannel,
                     openPlaylist = openPlaylist,
+                    openSearch = openSearch,
                     playUri = playUri,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                 )
@@ -222,6 +245,7 @@ private fun AppNavHost(
     openVideo: (StreamRef, List<StreamRef>) -> Unit,
     openChannel: (String) -> Unit,
     openPlaylist: (String) -> Unit,
+    openSearch: () -> Unit,
     playUri: (Uri, String) -> Unit,
     onRequestNotificationPermission: () -> Unit,
 ) {
@@ -231,21 +255,42 @@ private fun AppNavHost(
         modifier = modifier,
     ) {
         composable(Routes.HOME) {
-            HomeScreen(appViewModel { HomeViewModel(it) }, openVideo, openChannel)
+            HomeScreen(appViewModel { HomeViewModel(it) }, openVideo, openChannel, openSearch)
         }
         composable(Routes.SEARCH) {
-            SearchScreen(appViewModel { SearchViewModel(it) }, openVideo, openChannel, openPlaylist)
+            SearchScreen(
+                vm = appViewModel { SearchViewModel(it) },
+                onBack = { navController.popBackStack() },
+                onOpenVideo = openVideo,
+                onOpenChannel = openChannel,
+                onOpenPlaylist = openPlaylist,
+            )
         }
         composable(Routes.LIBRARY) {
             LibraryScreen(
                 vm = appViewModel { LibraryViewModel(it) },
-                onOpenVideo = openVideo,
                 onOpenLocalPlaylist = { id -> navController.navigate(Routes.localPlaylist(id)) },
+                onOpenHistory = { navController.navigate(Routes.HISTORY) },
+                onOpenDownloads = { navController.navigate(Routes.DOWNLOADS) },
+            )
+        }
+        composable(Routes.HISTORY) {
+            HistoryScreen(
+                vm = appViewModel { HistoryViewModel(it) },
+                onBack = { navController.popBackStack() },
+                onOpenVideo = openVideo,
+            )
+        }
+        composable(Routes.DOWNLOADS) {
+            DownloadsScreen(
+                vm = appViewModel { DownloadsViewModel(it) },
+                onBack = { navController.popBackStack() },
                 onPlayUri = playUri,
+                onOpenVideo = openVideo,
             )
         }
         composable(Routes.SUBSCRIPTIONS) {
-            SubscriptionsScreen(appViewModel { SubscriptionsViewModel(it) }, openChannel)
+            SubscriptionsScreen(appViewModel { SubscriptionsViewModel(it) }, openChannel, openSearch)
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
@@ -289,43 +334,34 @@ private fun AppNavHost(
     }
 }
 
-private data class NavItem(val route: String, val label: String, val icon: ImageVector)
-
-private val navItems = listOf(
-    NavItem(Routes.HOME, "Home", Icons.Rounded.Home),
-    NavItem(Routes.SEARCH, "Search", Icons.Rounded.Search),
-    NavItem(Routes.LIBRARY, "Library", Icons.Rounded.VideoLibrary),
-    NavItem(Routes.SUBSCRIPTIONS, "Subscriptions", Icons.Rounded.Subscriptions),
-    NavItem(Routes.SETTINGS, "Settings", Icons.Rounded.Settings),
-)
-
 @Composable
-private fun NavBar(currentRoute: String?, onNavigate: (String) -> Unit) {
-    NavigationBar {
-        navItems.forEach { item ->
-            NavigationBarItem(
-                selected = currentRoute == item.route,
-                onClick = { onNavigate(item.route) },
-                icon = { Icon(item.icon, contentDescription = item.label) },
-                label = { Text(item.label) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun NavRail(currentRoute: String?, onNavigate: (String) -> Unit) {
+private fun NavRail(currentRoute: String?, onNavigate: (String) -> Unit, unreadCount: Int) {
+    val items = bottomNavItems(unreadCount)
+    val routes = listOf(Routes.HOME, Routes.SUBSCRIPTIONS, Routes.LIBRARY, Routes.SETTINGS)
     NavigationRail(modifier = Modifier.fillMaxHeight()) {
-        navItems.forEach { item ->
+        items.forEachIndexed { index, item ->
+            val selected = currentRoute == routes[index]
             NavigationRailItem(
-                selected = currentRoute == item.route,
-                onClick = { onNavigate(item.route) },
-                icon = { Icon(item.icon, contentDescription = item.label) },
+                selected = selected,
+                onClick = { onNavigate(routes[index]) },
+                icon = {
+                    Icon(
+                        imageVector = if (selected) item.iconFilled else item.icon,
+                        contentDescription = item.label,
+                    )
+                },
                 label = { Text(item.label) },
             )
         }
     }
 }
+
+private fun bottomNavItems(unreadCount: Int) = listOf(
+    LpNavItem("Home", Icons.Outlined.Home, Icons.Rounded.Home),
+    LpNavItem("Subscriptions", Icons.Outlined.Subscriptions, Icons.Rounded.Subscriptions, unreadCount = unreadCount),
+    LpNavItem("Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
+    LpNavItem("Settings", Icons.Outlined.Settings, Icons.Rounded.Settings),
+)
 
 private fun handleDeepLink(
     context: Context,

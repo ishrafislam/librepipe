@@ -3,7 +3,7 @@ name: Search results and pagination
 ---
 - launchApp:
     stopApp: true
-- tapOn: "Search"
+- tapOn: "Search Librepipe"
 - tapOn: "Search YouTube or YouTube Music|.*android.*kotlin.*"
 - runFlow:
     when:
@@ -11,6 +11,7 @@ name: Search results and pagination
     commands:
       - tapOn: "Clear"
 - inputText: "android development"
+- pressKey: Enter
 - tapOn: "Videos"
 - extendedWaitUntil:
     visible: "Videos"

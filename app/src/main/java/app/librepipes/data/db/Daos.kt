@@ -26,6 +26,15 @@ interface SubscriptionDao {
     @Query("UPDATE subscriptions SET latestStreamId = :streamId, lastCheckedAt = :checkedAt WHERE channelUrl = :url")
     suspend fun updateChecked(url: String, streamId: String?, checkedAt: Long)
 
+    @Query("UPDATE subscriptions SET lastVisitedAt = :visitedAt WHERE channelUrl = :url")
+    suspend fun updateVisited(url: String, visitedAt: Long)
+
+    @Query("UPDATE subscriptions SET lastVisitedAt = :visitedAt WHERE lastVisitedAt < :visitedAt")
+    suspend fun markAllVisited(visitedAt: Long)
+
+    @Query("SELECT COUNT(*) FROM subscriptions WHERE lastCheckedAt > lastVisitedAt")
+    fun observeUnreadCount(): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM subscriptions")
     suspend fun count(): Int
 }
@@ -107,6 +116,11 @@ interface PlaylistDao {
 
 @Dao
 interface PlaylistItemDao {
+    data class PlaylistCount(val playlistId: Long, val count: Int)
+
+    @Query("SELECT playlistId, COUNT(*) AS count FROM playlist_items GROUP BY playlistId")
+    fun observeCounts(): Flow<List<PlaylistCount>>
+
     @Query("SELECT * FROM playlist_items WHERE playlistId = :playlistId ORDER BY position ASC")
     fun observeFor(playlistId: Long): Flow<List<LocalPlaylistItemEntity>>
 
@@ -148,4 +162,19 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun delete(id: Long)
+}
+
+@Dao
+interface SearchHistoryDao {
+    @Query("SELECT * FROM search_history ORDER BY createdAt DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<SearchHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entity: SearchHistoryEntity)
+
+    @Query("DELETE FROM search_history WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM search_history")
+    suspend fun clear()
 }

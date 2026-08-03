@@ -3,7 +3,7 @@ name: Verify filter tab content
 ---
 - launchApp:
     stopApp: true
-- tapOn: "Search"
+- tapOn: "Search Librepipe"
 - tapOn: "Search YouTube or YouTube Music|.*android.*kotlin.*"
 - runFlow:
     when:
@@ -28,6 +28,7 @@ name: Verify filter tab content
 - tapOn: "Playlists"
 - waitForAnimationToEnd
 - takeScreenshot: e2e/tab_playlists
+- tapOn: "More filters"
 - tapOn: "Music"
 - waitForAnimationToEnd
 - takeScreenshot: e2e/tab_music

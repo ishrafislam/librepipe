@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.librepipes.data.db.SearchHistoryEntity
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.ChannelRef
 import app.librepipes.data.model.PlaylistRef
@@ -31,12 +32,36 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val sections: List<HomeSection> = emptyList(),
         val trending: List<StreamRef> = emptyList(),
         val hasSubscriptions: Boolean = false,
+        val inProgress: List<StreamRef> = emptyList(),
+        val downloadedIds: Set<String> = emptySet(),
+        val progressById: Map<String, Float> = emptyMap(),
     )
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            container.history.observeRecent(100).collect { history ->
+                val inProgress = history.mapNotNull { entry ->
+                    StreamRef.fromJson(entry.streamJson)?.takeIf {
+                        entry.durationMs > 0 && entry.positionMs > 0 &&
+                            entry.durationMs - entry.positionMs > 15_000
+                    }
+                }
+                val progressById = inProgress.associate { ref ->
+                    val entry = history.firstOrNull { it.streamId == ref.id }
+                    ref.id to ((entry?.positionMs ?: 0L).toFloat() / (entry?.durationMs ?: 1L).coerceAtLeast(1L))
+                }
+                _uiState.update { it.copy(inProgress = inProgress, progressById = progressById) }
+            }
+        }
+        viewModelScope.launch {
+            container.downloads.observeAll().collect { downloads ->
+                val ids = downloads.mapNotNull { StreamRef.fromJson(it.streamJson)?.id }.toSet()
+                _uiState.update { it.copy(downloadedIds = ids) }
+            }
+        }
         refresh()
     }
 
@@ -93,9 +118,25 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         private set
     var searched by mutableStateOf(false)
         private set
+    var recents by mutableStateOf<List<SearchHistoryEntity>>(emptyList())
+        private set
 
     private var feed: Extractor.SearchFeed? = null
     private var suggestionJob: kotlinx.coroutines.Job? = null
+
+    init {
+        viewModelScope.launch {
+            container.searchHistory.observeRecent(12).collect { recents = it }
+        }
+    }
+
+    fun removeRecent(id: Long) {
+        viewModelScope.launch { container.searchHistory.remove(id) }
+    }
+
+    fun clearRecents() {
+        viewModelScope.launch { container.searchHistory.clear() }
+    }
 
     fun onQueryChange(newQuery: String) {
         query = newQuery
@@ -117,6 +158,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         activeFilter = filter
         suggestions = emptyList()
         viewModelScope.launch {
+            container.searchHistory.add(q)
             loading = true
             error = null
             try {

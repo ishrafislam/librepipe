@@ -14,6 +14,8 @@ class PlaylistRepository(
 
     fun observePlaylists(): Flow<List<LocalPlaylistEntity>> = playlistDao.observeAll()
 
+    fun observeCounts(): Flow<List<PlaylistItemDao.PlaylistCount>> = itemDao.observeCounts()
+
     suspend fun create(name: String): Long =
         playlistDao.insert(LocalPlaylistEntity(name = name, createdAt = System.currentTimeMillis()))
 

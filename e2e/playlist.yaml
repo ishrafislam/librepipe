@@ -3,15 +3,15 @@ name: Playlist page and load more
 ---
 - launchApp:
     stopApp: true
-- tapOn: "Search"
-- tapOn:
-    point: "50%,15%"
+- tapOn: "Search Librepipe"
+- tapOn: "Search YouTube or YouTube Music|.*kotlin full course.*"
 - runFlow:
     when:
       visible: "Clear"
     commands:
       - tapOn: "Clear"
 - inputText: "kotlin full course"
+- pressKey: Enter
 - tapOn: "Playlists"
 - extendedWaitUntil:
     visible: ".*Kotlin.*"
