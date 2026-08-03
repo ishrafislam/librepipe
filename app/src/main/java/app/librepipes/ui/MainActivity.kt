@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,9 +50,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.librepipes.LibrePipeApp
 import app.librepipes.data.model.StreamRef
+import app.librepipes.player.NowPlayingActivity
 import app.librepipes.player.PlaybackOpener
 import app.librepipes.player.PopupLauncher
 import app.librepipes.ui.components.kit.LpBottomBar
+import app.librepipes.ui.components.kit.LpMiniPlayer
 import app.librepipes.ui.components.kit.LpNavItem
 import app.librepipes.ui.screens.ChannelScreen
 import app.librepipes.ui.screens.DownloadsScreen
@@ -70,6 +73,7 @@ import app.librepipes.ui.viewmodels.HistoryViewModel
 import app.librepipes.ui.viewmodels.HomeViewModel
 import app.librepipes.ui.viewmodels.LibraryViewModel
 import app.librepipes.ui.viewmodels.LocalPlaylistViewModel
+import app.librepipes.ui.viewmodels.MiniPlayerViewModel
 import app.librepipes.ui.viewmodels.PlaylistViewModel
 import app.librepipes.ui.viewmodels.SearchViewModel
 import app.librepipes.ui.viewmodels.SettingsViewModel
@@ -187,6 +191,14 @@ private fun MainScreen(
     }
     val openSearch: () -> Unit = { navController.navigate(Routes.SEARCH) }
 
+    val openMiniPlayer: (StreamRef) -> Unit = { ref ->
+        context.startActivity(
+            Intent(context, NowPlayingActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, ref.toJson())
+        )
+    }
+
     val onNavigate: (String) -> Unit = { route ->
         navController.navigate(route) {
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
@@ -203,24 +215,31 @@ private fun MainScreen(
         if (wide) {
             Row(modifier = Modifier.fillMaxSize()) {
                 NavRail(currentRoute = currentRoute, onNavigate = onNavigate, unreadCount = unreadCount)
-                AppNavHost(
-                    navController = navController,
-                    openVideo = openVideo,
-                    openChannel = openChannel,
-                    openPlaylist = openPlaylist,
-                    openSearch = openSearch,
-                    playUri = playUri,
-                    onRequestNotificationPermission = onRequestNotificationPermission,
-                )
+                Column(modifier = Modifier.fillMaxSize()) {
+                    AppNavHost(
+                        navController = navController,
+                        modifier = Modifier.weight(1f),
+                        openVideo = openVideo,
+                        openChannel = openChannel,
+                        openPlaylist = openPlaylist,
+                        openSearch = openSearch,
+                        playUri = playUri,
+                        onRequestNotificationPermission = onRequestNotificationPermission,
+                    )
+                    MiniPlayerHost(onOpen = openMiniPlayer)
+                }
             }
         } else {
             Scaffold(
                 bottomBar = {
-                    LpBottomBar(
-                        items = bottomNavItems(unreadCount),
-                        selectedIndex = selectedIndex,
-                        onSelect = { index -> onNavigate(tabRoutes[index]) },
-                    )
+                    Column {
+                        MiniPlayerHost(onOpen = openMiniPlayer)
+                        LpBottomBar(
+                            items = bottomNavItems(unreadCount),
+                            selectedIndex = selectedIndex,
+                            onSelect = { index -> onNavigate(tabRoutes[index]) },
+                        )
+                    }
                 },
             ) { padding ->
                 AppNavHost(
@@ -236,6 +255,22 @@ private fun MainScreen(
             }
         }
     }
+}
+
+@Composable
+private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
+    val vm: MiniPlayerViewModel = appViewModel { MiniPlayerViewModel(it) }
+    val state by vm.uiState.collectAsState()
+    val ref = state.ref
+    if (!state.visible || ref == null) return
+    LpMiniPlayer(
+        title = state.title,
+        channelName = state.channelName,
+        thumbnailUrl = state.thumbnailUrl,
+        progress = state.progress,
+        onClick = { onOpen(ref) },
+        onClose = vm::stop,
+    )
 }
 
 @Composable

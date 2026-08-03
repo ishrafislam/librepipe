@@ -268,4 +268,29 @@ class ParsersTest {
         assertTrue(findAllByKey(page, "lockupViewModel").isEmpty())
         assertNull(Parsers.continuationToken(page))
     }
+
+    @Test
+    fun watchPage_chapterMarkers() {
+        val html = File("src/test/resources/fixtures/watch_chapters.html").readText()
+        val playerResponse = Parsers.extractWatchPlayerResponse(html)
+        assertNotNull(playerResponse)
+        val chapters = Parsers.parseChapters(playerResponse!!)
+        assertEquals(5, chapters.size)
+        assertEquals("Introduction", chapters[0].title)
+        assertEquals(0L, chapters[0].startSeconds)
+        assertEquals("Chapter 1. Introduction to Linux Families", chapters[1].title)
+        assertEquals(98L, chapters[1].startSeconds)
+        assertEquals("Chapter 2. Linux Philosophy and Concepts", chapters[2].title)
+        assertEquals(459L, chapters[2].startSeconds)
+        assertEquals("Chapter 4. Graphical Interface", chapters[4].title)
+        assertEquals(3936L, chapters[4].startSeconds)
+        assertTrue(chapters.zipWithNext().all { it.first.startSeconds <= it.second.startSeconds })
+    }
+
+    @Test
+    fun watchPage_noPlayerResponseReturnsNull() {
+        assertNull(Parsers.extractWatchPlayerResponse("<html>no player data here</html>"))
+        assertNull(Parsers.extractWatchPlayerResponse("var ytInitialPlayerResponse = ")) // truncated
+        assertTrue(Parsers.parseChapters(JSONObject("{}")).isEmpty())
+    }
 }

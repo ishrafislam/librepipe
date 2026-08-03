@@ -14,7 +14,71 @@ import java.io.IOException
  */
 object Parsers {
 
+    private val WATCH_PLAYER_RE = Regex(
+        "(?:var\\s+ytInitialPlayerResponse|window\\[?\"ytInitialPlayerResponse\"?\\]?)\\s*=\\s*\\{"
+    )
+
     // ------------------------------------------------------------ primitives
+
+    /**
+     * Pulls the `ytInitialPlayerResponse` JSON object out of a watch page's HTML.
+     * Returns null when the page is a consent wall, logged-in shell, etc.
+     */
+    fun extractWatchPlayerResponse(html: String): JSONObject? {
+        val match = WATCH_PLAYER_RE.find(html) ?: return null
+        val text = html.substring(match.range.first)
+        val open = text.indexOf('{')
+        var depth = 0
+        for (i in open until text.length) {
+            when (text[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        return runCatching { JSONObject(text.substring(open, i + 1)) }.getOrNull()
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Chapter markers from a watch page's `ytInitialPlayerResponse`.
+     * The player API no longer ships them; they live in the watch HTML's
+     * playerOverlays -> ... -> multiMarkersPlayerBarRenderer -> markersMap
+     * under the DESCRIPTION_CHAPTERS (formerly CHAPTER_MARKERS) key.
+     */
+    fun parseChapters(root: JSONObject): List<Chapter> {
+        val map = root.optJSONObject("playerOverlays")
+            ?.optJSONObject("playerOverlayRenderer")
+            ?.optJSONObject("decoratedPlayerBarRenderer")
+            ?.optJSONObject("decoratedPlayerBarRenderer")
+            ?.optJSONObject("playerBar")
+            ?.optJSONObject("multiMarkersPlayerBarRenderer")
+            ?.optJSONArray("markersMap")
+            ?: return emptyList()
+        for (i in 0 until map.length()) {
+            val entry = map.optJSONObject(i) ?: continue
+            if (entry.optString("key") !in setOf("DESCRIPTION_CHAPTERS", "CHAPTER_MARKERS")) continue
+            val chapters = entry.optJSONObject("value")?.optJSONArray("chapters") ?: continue
+            val result = buildList {
+                for (j in 0 until chapters.length()) {
+                    val renderer = chapters.optJSONObject(j)?.optJSONObject("chapterRenderer") ?: continue
+                    val startMs = renderer.optLong("timeRangeStartMillis", -1L)
+                    if (startMs < 0) continue
+                    add(
+                        Chapter(
+                            title = runsText(renderer.optJSONObject("title")),
+                            startSeconds = startMs / 1000L,
+                        )
+                    )
+                }
+            }
+            return result.sortedBy { it.startSeconds }
+        }
+        return emptyList()
+    }
 
     /** Extracts text from {"runs":[{"text":..}],..} / {"simpleText":..} / {"content":..}. */
     fun runsText(o: JSONObject?): String? {

@@ -52,6 +52,12 @@ class InnertubeClient(private val okHttpClient: OkHttpClient) {
     @Volatile
     private var cachedWebVersion: String? = null
 
+    /** videoId -> chapters; watch pages are heavy, cache eagerly (bounded LRU). */
+    private val chaptersCache = object : LinkedHashMap<String, List<Chapter>>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Chapter>>) =
+            size > 32
+    }
+
     /** Lazily bootstraps the WEB client version from sw.js (cached in memory). */
     fun webClientVersion(): String {
         cachedWebVersion?.let { return it }
@@ -88,6 +94,19 @@ class InnertubeClient(private val okHttpClient: OkHttpClient) {
     fun player(videoId: String): JSONObject {
         val body = androidBody().put("videoId", videoId)
         return post("$API/player", body, ANDROID_UA, YT)
+    }
+
+    // ---------------------------------------------------------------- chapters
+
+    /** Chapter markers (start times) from the watch page; empty when unavailable. */
+    fun chapters(videoId: String): List<Chapter> {
+        chaptersCache[videoId]?.let { return it }
+        val result = runCatching {
+            val html = get("$YT/watch?v=$videoId", WEB_UA)
+            Parsers.extractWatchPlayerResponse(html)?.let { Parsers.parseChapters(it) }
+        }.getOrNull().orEmpty()
+        chaptersCache[videoId] = result
+        return result
     }
 
     /** YouTube Music search (WEB_REMIX client). */
