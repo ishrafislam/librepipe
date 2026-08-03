@@ -33,6 +33,12 @@ data class SubtitleTrack(
 
 enum class StreamType { NORMAL, LIVE, AUDIO }
 
+/** A video chapter marker (start time within the video). */
+data class Chapter(
+    val title: String?,
+    val startSeconds: Long,
+)
+
 /**
  * Everything needed to play or download a video, resolved from the
  * InnerTube player response (replaces NewPipe's StreamInfo).
@@ -57,6 +63,8 @@ data class StreamInfo(
     val dashMpdUrl: String? = null,
     val hlsUrl: String? = null,
     val subtitles: List<SubtitleTrack> = emptyList(),
+    /** Chapter markers, fetched from the watch page (player API no longer ships them). */
+    val chapters: List<Chapter> = emptyList(),
 ) {
     val isLive: Boolean get() = streamType == StreamType.LIVE
 }

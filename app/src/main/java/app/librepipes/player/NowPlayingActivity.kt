@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,36 +22,30 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Audiotrack
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PictureInPicture
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Subtitles
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -65,25 +60,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.ui.PlayerView
 import app.librepipes.LibrePipeApp
+import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.DownloadMode
 import app.librepipes.data.model.StreamRef
-import app.librepipes.data.repo.PlaylistRepository
 import app.librepipes.ui.components.AddToPlaylistDialog
+import app.librepipes.ui.components.kit.LpSeekBar
+import app.librepipes.ui.components.kit.LpSheet
+import app.librepipes.ui.components.kit.LpStatusPill
+import app.librepipes.ui.components.kit.LpSwitch
 import app.librepipes.ui.theme.LibrePipeTheme
 import app.librepipes.util.Format
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class NowPlayingActivity : ComponentActivity() {
@@ -143,7 +143,7 @@ class NowPlayingActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, UnstableApi::class)
+@OptIn(UnstableApi::class)
 @Composable
 fun NowPlayingScreen(
     onBack: () -> Unit,
@@ -169,10 +169,16 @@ fun NowPlayingScreen(
     var duration by remember { mutableStateOf(0L) }
     var hasNext by remember { mutableStateOf(false) }
     var hasPrev by remember { mutableStateOf(false) }
+    var buffering by remember { mutableStateOf(false) }
+    var videoHeight by remember { mutableStateOf(0) }
+    var chapters by remember { mutableStateOf<List<Float>>(emptyList()) }
+    var autoplay by remember { mutableStateOf(true) }
 
     fun currentRef(): StreamRef? = controller?.currentMediaItem
         ?.mediaMetadata?.extras?.getString(Playback.EXTRA_REF_JSON)
         ?.let { StreamRef.fromJson(it) }
+
+    val isLive = currentRef()?.isLive == true
 
     LaunchedEffect(Unit) {
         val c = PlaybackOpener.connect(context)
@@ -186,12 +192,25 @@ fun NowPlayingScreen(
                 duration = player.duration
                 hasNext = player.hasNextMediaItem()
                 hasPrev = player.hasPreviousMediaItem()
+                buffering = player.playbackState == Player.STATE_BUFFERING
             }
 
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 val ref = currentRef()
                 audioOnly = ref?.isAudio == true
                 subtitlesAvailable = false
+                // "Autoplay off": playback auto-advanced — go back and pause.
+                if (!autoplay && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                    val index = c.currentMediaItemIndex
+                    if (index > 0) {
+                        c.seekTo(index - 1, 0L)
+                        c.pause()
+                    }
+                }
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoHeight = videoSize.height
             }
         }
         c.addListener(listener)
@@ -218,11 +237,26 @@ fun NowPlayingScreen(
     LaunchedEffect(controller) {
         val c = controller ?: return@LaunchedEffect
         HistoryTracker.start(context, c, scope)
+        autoplay = runCatching { container.settings.autoplay.first() }.getOrDefault(true)
         while (true) {
             delay(500)
             position = c.currentPosition
             duration = c.duration
             isPlaying = c.isPlaying
+        }
+    }
+
+    // Chapter ticks (fractions of the video) for the seek bar.
+    LaunchedEffect(currentRef()?.id) {
+        val ref = currentRef()
+        val dur = controller?.duration ?: 0L
+        if (ref == null || ref.isLive || dur <= 0) {
+            chapters = emptyList()
+            return@LaunchedEffect
+        }
+        val marks = runCatching { Extractor.chapters(ref.url) }.getOrDefault(emptyList())
+        chapters = marks.mapNotNull { mark ->
+            (mark.startSeconds.toFloat() / dur).takeIf { it in 0.001f..1f }
         }
     }
 
@@ -243,15 +277,14 @@ fun NowPlayingScreen(
                 onNext = { controller?.seekToNextMediaItem() },
                 onPrev = { controller?.seekToPreviousMediaItem() },
                 onSeek = { controller?.seekTo(it) },
+                chapters = chapters,
             )
         } else {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     PlayerView(ctx).apply {
-                        useController = true
-                        controllerShowTimeoutMs = 0
-                        controllerHideOnTouch = true
+                        useController = false
                         setShutterBackgroundColor(AndroidColor.BLACK)
                     }
                 },
@@ -260,18 +293,28 @@ fun NowPlayingScreen(
                     playerView.keepScreenOn = isPlaying
                 },
             )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures { controller?.playOrPause() }
+                    }
+            )
         }
 
         if (!pipMode) {
+            // Top chrome: back + metadata + subtitles/audio-only/PiP.
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            0f to Color(0x78000000),
-                            0.18f to Color.Transparent
+                            0f to Color(0x8C000000),
+                            1f to Color.Transparent,
                         )
                     )
+                    .statusBarsPadding()
             ) {
                 val ref = currentRef()
                 Row(
@@ -319,82 +362,198 @@ fun NowPlayingScreen(
                 }
             }
 
-            Row(
+            // Bottom chrome: for video, kit seek bar with chapter ticks, status
+            // pills and transport controls; the action row always sits on top.
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Transparent,
-                            0.35f to Color(0x8C000000)
+                            0.55f to Color(0xE6000000),
                         )
                     )
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                val ref = currentRef()
-                IconButton(onClick = {
-                    if (ref != null) {
-                        scope.launch {
-                            container.downloadManager.enqueue(ref, DownloadMode.VIDEO)
+                if (!audioOnly) {
+                    LpSeekBar(
+                        progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+                        onSeek = { fraction -> controller?.seekTo((fraction * duration).toLong()) },
+                        chapters = chapters,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (isLive) {
+                            LpStatusPill(text = "LIVE", isLive = true)
+                        } else {
+                            Text(
+                                text = Format.time(position),
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (buffering) LpStatusPill(text = "Buffering…")
+                            if (!isLive && videoHeight >= 360) LpStatusPill(text = "${videoHeight}p")
+                        }
+                        if (!isLive) {
+                            Text(
+                                text = Format.time(duration),
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
                         }
                     }
-                }) {
-                    Icon(Icons.Rounded.Download, contentDescription = "Download", tint = Color.White)
-                }
-                IconButton(onClick = {
-                    if (ref != null) {
-                        queueRefs = queueRefs.ifEmpty { listOf(ref) }
-                        showPlaylistDialog = true
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = { controller?.seekToPreviousMediaItem() }, enabled = hasPrev) {
+                            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous", tint = Color.White)
+                        }
+                        IconButton(
+                            onClick = { controller?.playOrPause() },
+                            modifier = Modifier.size(72.dp),
+                        ) {
+                            Icon(
+                                if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(56.dp),
+                            )
+                        }
+                        IconButton(onClick = { controller?.seekToNextMediaItem() }, enabled = hasNext) {
+                            Icon(Icons.Rounded.SkipNext, contentDescription = "Next", tint = Color.White)
+                        }
                     }
-                }) {
-                    Icon(Icons.Rounded.PlaylistAdd, contentDescription = "Add to playlist", tint = Color.White)
+                    Spacer(Modifier.height(4.dp))
                 }
-                IconButton(onClick = {
-                    if (ref != null) {
-                        scope.launch {                                PlaybackOpener.startSession(context, ref, queueRefs.ifEmpty { listOf(ref) })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    val ref = currentRef()
+                    IconButton(onClick = {
+                        if (ref != null) {
+                            scope.launch {
+                                container.downloadManager.enqueue(ref, DownloadMode.VIDEO)
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Rounded.Download, contentDescription = "Download", tint = Color.White)
+                    }
+                    IconButton(onClick = {
+                        if (ref != null) {
+                            queueRefs = queueRefs.ifEmpty { listOf(ref) }
+                            showPlaylistDialog = true
+                        }
+                    }) {
+                        Icon(Icons.Rounded.PlaylistAdd, contentDescription = "Add to playlist", tint = Color.White)
+                    }
+                    IconButton(onClick = {
+                        if (ref != null) {
+                            scope.launch {
+                                PlaybackOpener.startSession(context, ref, queueRefs.ifEmpty { listOf(ref) })
                                 PopupLauncher.requestAndStart(context, ref, queueRefs)
+                            }
                         }
+                    }) {
+                        Icon(Icons.Rounded.PictureInPicture, contentDescription = "Popup player", tint = Color.White)
                     }
-                }) {
-                    Icon(Icons.Rounded.PictureInPicture, contentDescription = "Popup player", tint = Color.White)
-                }
-                IconButton(onClick = { showQueue = true }) {
-                    Icon(Icons.Rounded.QueueMusic, contentDescription = "Queue", tint = Color.White)
+                    IconButton(onClick = { showQueue = true }) {
+                        Icon(Icons.Rounded.QueueMusic, contentDescription = "Queue", tint = Color.White)
+                    }
                 }
             }
         }
     }
 
     if (showQueue) {
-        ModalBottomSheet(onDismissRequest = { showQueue = false }) {
-            val items = (0 until (controller?.mediaItemCount ?: 0)).mapNotNull { index ->
-                controller?.getMediaItemAt(index)
+        val colors = MaterialTheme.colorScheme
+        val items = (0 until (controller?.mediaItemCount ?: 0)).mapNotNull { index ->
+            controller?.getMediaItemAt(index)
+        }
+        LpSheet(title = "Up next", onDismiss = { showQueue = false }) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Autoplay next", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "Pause at the end of each video",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+                LpSwitch(
+                    checked = autoplay,
+                    onCheckedChange = { value ->
+                        autoplay = value
+                        scope.launch { container.settings.setAutoplay(value) }
+                    },
+                )
             }
-            LazyColumn(modifier = Modifier.height(400.dp)) {
-                items(items) { item ->
-                    val ref = item.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
-                        ?.let { StreamRef.fromJson(it) }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val idx = (0 until (controller?.mediaItemCount ?: 0)).firstOrNull { i ->
-                                    controller?.getMediaItemAt(i)?.mediaId == item.mediaId
-                                } ?: -1
-                                if (idx >= 0) controller?.seekTo(idx, 0L)
-                                showQueue = false
-                            }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            if (item.mediaId == controller?.currentMediaItem?.mediaId) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
-                            contentDescription = null,
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(ref?.title ?: item.mediaId, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                color = colors.outlineVariant,
+            )
+            items.forEachIndexed { index, item ->
+                val ref = item.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
+                    ?.let { StreamRef.fromJson(it) }
+                val isCurrent = item.mediaId == controller?.currentMediaItem?.mediaId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            controller?.seekTo(index, 0L)
+                            showQueue = false
+                        }
+                        .padding(horizontal = 24.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        if (isCurrent) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = if (isCurrent) colors.primary else colors.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = ref?.title ?: item.mediaId,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (isCurrent) colors.primary else colors.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                color = colors.outlineVariant,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = {
+                    controller?.clearMediaItems()
+                    showQueue = false
+                }) {
+                    Text("Clear queue", color = colors.error)
                 }
             }
         }
@@ -424,6 +583,7 @@ private fun AudioOnlyPlayer(
     onNext: () -> Unit,
     onPrev: () -> Unit,
     onSeek: (Long) -> Unit,
+    chapters: List<Float>,
 ) {
     Box(
         modifier = Modifier
@@ -471,11 +631,10 @@ private fun AudioOnlyPlayer(
                 maxLines = 1,
             )
             Spacer(Modifier.height(16.dp))
-            Slider(
-                value = position.toFloat(),
-                onValueChange = { onSeek(it.toLong()) },
-                valueRange = 0f..(if (duration > 0) duration.toFloat() else 1f),
-                modifier = Modifier.fillMaxWidth(),
+            LpSeekBar(
+                progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+                onSeek = { fraction -> onSeek((fraction * duration).toLong()) },
+                chapters = chapters,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),

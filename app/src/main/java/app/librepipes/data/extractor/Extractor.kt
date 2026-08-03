@@ -6,6 +6,7 @@ import app.librepipes.data.model.StreamRef
 import app.librepipes.data.youtube.InnertubeClient
 import app.librepipes.data.youtube.Parsers
 import app.librepipes.data.youtube.StreamInfo
+import app.librepipes.data.youtube.Chapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -146,6 +147,11 @@ object Extractor {
         val id = idFromUrl(url)
         val page = c.player(id)
         Parsers.parseStreamInfo(page, id)
+    }
+
+    /** Chapter markers (start times) for a video; empty when unavailable. */
+    suspend fun chapters(url: String): List<Chapter> = onIo { c ->
+        c.chapters(idFromUrl(url))
     }
 
     // ------------------------------------------------------------------ Channels

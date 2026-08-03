@@ -24,6 +24,7 @@ class SettingsRepository(private val context: Context) {
         val REFRESH_INTERVAL = intPreferencesKey("refresh_interval_hours")
         val DOWNLOAD_QUALITY = intPreferencesKey("download_quality")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val AUTOPLAY = booleanPreferencesKey("autoplay")
     }
 
     private val dataStore = context.settingsDataStore
@@ -37,6 +38,7 @@ class SettingsRepository(private val context: Context) {
     val refreshIntervalHours: Flow<Int> = dataStore.data.map { it[Keys.REFRESH_INTERVAL] ?: 6 }
     val downloadQuality: Flow<Int> = dataStore.data.map { it[Keys.DOWNLOAD_QUALITY] ?: 1080 }
     val dynamicColor: Flow<Boolean> = dataStore.data.map { it[Keys.DYNAMIC_COLOR] ?: true }
+    val autoplay: Flow<Boolean> = dataStore.data.map { it[Keys.AUTOPLAY] ?: true }
 
     suspend fun setTheme(value: Int) = dataStore.edit { it[Keys.THEME] = value }
     suspend fun setMaxQuality(value: Int) = dataStore.edit { it[Keys.MAX_QUALITY] = value }
@@ -47,6 +49,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setRefreshInterval(value: Int) = dataStore.edit { it[Keys.REFRESH_INTERVAL] = value }
     suspend fun setDownloadQuality(value: Int) = dataStore.edit { it[Keys.DOWNLOAD_QUALITY] = value }
     suspend fun setDynamicColor(value: Boolean) = dataStore.edit { it[Keys.DYNAMIC_COLOR] = value }
+    suspend fun setAutoplay(value: Boolean) = dataStore.edit { it[Keys.AUTOPLAY] = value }
 
     data class Snapshot(
         val theme: Int,
@@ -58,6 +61,7 @@ class SettingsRepository(private val context: Context) {
         val refreshIntervalHours: Int,
         val downloadQuality: Int,
         val dynamicColor: Boolean,
+        val autoplay: Boolean,
     )
 
     suspend fun snapshot(): Snapshot {
@@ -72,6 +76,7 @@ class SettingsRepository(private val context: Context) {
             refreshIntervalHours = prefs[Keys.REFRESH_INTERVAL] ?: 6,
             downloadQuality = prefs[Keys.DOWNLOAD_QUALITY] ?: 1080,
             dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: true,
+            autoplay = prefs[Keys.AUTOPLAY] ?: true,
         )
     }
 }

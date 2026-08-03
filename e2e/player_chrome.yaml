@@ -1,0 +1,55 @@
+appId: app.librepipes
+name: Phase 4 player chrome, mini player, queue sheet
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Search Librepipe"
+- runFlow:
+    when:
+      visible: "Clear"
+    commands:
+      - tapOn: "Clear"
+- inputText: "kotlin in 100 seconds"
+- pressKey: Enter
+- tapOn: "Videos"
+- extendedWaitUntil:
+    visible: ".*views.*"
+    timeout: 25000
+- tapOn:
+    text: ".*Kotlin in 100 Seconds.*"
+    index: 1
+- extendedWaitUntil:
+    visible: "Kotlin in 100 Seconds"
+    timeout: 30000
+- assertVisible: "Pause"
+- assertVisible: "Next"
+- assertVisible: "Previous"
+# Player chrome controls (top bar)
+- assertVisible: "Picture in picture"
+- assertVisible: "Download"
+- assertVisible: "Add to playlist"
+- assertVisible: "Queue"
+- assertVisible: "Seek bar"
+- takeScreenshot: e2e/player_chrome
+- back
+- extendedWaitUntil:
+    visible: "Kotlin in 100 Seconds"
+    timeout: 10000
+- takeScreenshot: e2e/mini_player
+# 0 = search field text, 1 = search result row, 2 = mini-player title
+- tapOn:
+    text: ".*Kotlin in 100 Seconds.*"
+    index: 2
+- extendedWaitUntil:
+    visible: "Pause"
+    timeout: 15000
+- assertVisible: "Seek bar"
+- takeScreenshot: e2e/player_reopened
+- tapOn: "Queue"
+- extendedWaitUntil:
+    visible: "Up next"
+    timeout: 10000
+- assertVisible: "Autoplay next"
+- assertVisible: "Clear queue"
+- assertVisible: "Kotlin in 100 Seconds"
+- takeScreenshot: e2e/queue_sheet
