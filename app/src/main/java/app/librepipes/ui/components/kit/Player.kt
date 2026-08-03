@@ -1,0 +1,225 @@
+package app.librepipes.ui.components.kit
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import app.librepipes.ui.theme.ShapeTokens
+import coil3.compose.AsyncImage
+
+/**
+ * Design board 02-F — Player components.
+ */
+
+/** Brand blue used for the played portion of the seek bar — the overlay is theme-independent. */
+val LpSeekPlayed = Color(0xFF4AA8E8)
+
+/**
+ * Seek bar: played = brand blue, 12dp thumb (6x16 pill while dragging),
+ * optional chapter ticks (2x8, white 90%).
+ */
+@Composable
+fun LpSeekBar(
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    chapters: List<Float> = emptyList(),
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val dragging by interaction.collectIsDraggedAsState()
+    val thumbSize by animateDpAsState(if (dragging) 6.dp else 12.dp, label = "seek-thumb")
+    val colors = MaterialTheme.colorScheme
+    val played = LpSeekPlayed
+    val track = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) Color(0xFFD8DCE0) else Color(0xFF3E4347)
+    val density = LocalDensity.current
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(24.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .semantics { contentDescription = "Seek bar" },
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .align(Alignment.CenterStart)
+                .pointerInput(chapters, progress) {
+                    detectTapGestures { offset ->
+                        val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                        onSeek(fraction)
+                    }
+                },
+        ) {
+            val trackY = size.height / 2f
+            val stroke = with(density) { 4.dp.toPx() }
+            drawLine(track, Offset(0f, trackY), Offset(size.width, trackY), strokeWidth = stroke)
+            val playedWidth = size.width * progress.coerceIn(0f, 1f)
+            drawLine(played, Offset(0f, trackY), Offset(playedWidth, trackY), strokeWidth = stroke)
+            chapters.forEach { chapter ->
+                val x = size.width * chapter.coerceIn(0f, 1f)
+                if (x in 0f..size.width) {
+                    drawRect(
+                        color = Color.White.copy(alpha = 0.9f),
+                        topLeft = Offset(x - 1f, trackY - 4f),
+                        size = Size(2f, 8f),
+                    )
+                }
+            }
+            val thumbPx = with(density) { thumbSize.toPx() }
+            if (dragging) {
+                drawRoundRect(
+                    color = played,
+                    topLeft = Offset(playedWidth - thumbPx / 2f, trackY - 8f),
+                    size = Size(thumbPx, 16f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(thumbPx / 2f),
+                )
+            } else {
+                drawCircle(played, radius = thumbPx / 2f, center = Offset(playedWidth, trackY))
+            }
+        }
+    }
+}
+
+/** 72dp mini player: surfaceContainer, 96x54 thumb (radius 8), 2dp progress on the bottom edge. */
+@Composable
+fun LpMiniPlayer(
+    title: String,
+    channelName: String?,
+    thumbnailUrl: String?,
+    progress: Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onClose: (() -> Unit)? = null,
+) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(72.dp)
+            .background(colors.surfaceContainer)
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(70.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AsyncImage(
+                model = thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .padding(start = 16.dp)
+                    .width(96.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop,
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!channelName.isNullOrBlank()) {
+                    Text(
+                        text = channelName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        val track = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) Color(0xFF42474E) else Color(0xFF9CCBFA)
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(colors.surfaceContainerHigh),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .height(2.dp)
+                    .background(track),
+            )
+        }
+        if (onClose != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 8.dp)
+                    .size(32.dp)
+                    .clip(ShapeTokens.full)
+                    .background(colors.surfaceContainerHigh)
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "\u00D7", color = colors.onSurface, style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+}
+
+/** Status pill on artwork: white 8% background, LIVE = brand red text. */
+@Composable
+fun LpStatusPill(
+    text: String,
+    modifier: Modifier = Modifier,
+    isLive: Boolean = false,
+) {
+    val colors = MaterialTheme.colorScheme
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (isLive) Color(0xFFFF4B3E) else colors.onSurface,
+        modifier = modifier
+            .clip(ShapeTokens.full)
+            .background(Color.White.copy(alpha = 0.08f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}

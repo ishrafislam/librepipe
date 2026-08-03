@@ -58,6 +58,8 @@
             </intent-filter>
         </activity>
 
+        <!-- Debug-only component kit gallery — declared exported in app/src/debug/AndroidManifest.xml -->
+
         <!-- Full screen player -->
         <activity
             android:name=".player.NowPlayingActivity"

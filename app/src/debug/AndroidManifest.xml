@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Debug builds may launch the component gallery from adb for design verification. -->
+    <application>
+        <activity
+            android:name=".ui.debug.ComponentGalleryActivity"
+            android:exported="true"
+            android:theme="@style/Theme.LibrePipe"
+            tools:replace="android:exported" />
+    </application>
+
+</manifest>
