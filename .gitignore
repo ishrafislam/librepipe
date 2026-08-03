@@ -18,3 +18,4 @@ app/build
 .agents/
 skills-lock.json
 .claude/
+design/
