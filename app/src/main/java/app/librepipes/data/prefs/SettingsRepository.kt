@@ -23,6 +23,7 @@ class SettingsRepository(private val context: Context) {
         val NOTIFICATIONS = booleanPreferencesKey("notifications")
         val REFRESH_INTERVAL = intPreferencesKey("refresh_interval_hours")
         val DOWNLOAD_QUALITY = intPreferencesKey("download_quality")
+        val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
     }
 
     private val dataStore = context.settingsDataStore
@@ -35,6 +36,7 @@ class SettingsRepository(private val context: Context) {
     val notificationsEnabled: Flow<Boolean> = dataStore.data.map { it[Keys.NOTIFICATIONS] ?: true }
     val refreshIntervalHours: Flow<Int> = dataStore.data.map { it[Keys.REFRESH_INTERVAL] ?: 6 }
     val downloadQuality: Flow<Int> = dataStore.data.map { it[Keys.DOWNLOAD_QUALITY] ?: 1080 }
+    val dynamicColor: Flow<Boolean> = dataStore.data.map { it[Keys.DYNAMIC_COLOR] ?: true }
 
     suspend fun setTheme(value: Int) = dataStore.edit { it[Keys.THEME] = value }
     suspend fun setMaxQuality(value: Int) = dataStore.edit { it[Keys.MAX_QUALITY] = value }
@@ -44,6 +46,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNotificationsEnabled(value: Boolean) = dataStore.edit { it[Keys.NOTIFICATIONS] = value }
     suspend fun setRefreshInterval(value: Int) = dataStore.edit { it[Keys.REFRESH_INTERVAL] = value }
     suspend fun setDownloadQuality(value: Int) = dataStore.edit { it[Keys.DOWNLOAD_QUALITY] = value }
+    suspend fun setDynamicColor(value: Boolean) = dataStore.edit { it[Keys.DYNAMIC_COLOR] = value }
 
     data class Snapshot(
         val theme: Int,
@@ -54,6 +57,7 @@ class SettingsRepository(private val context: Context) {
         val notificationsEnabled: Boolean,
         val refreshIntervalHours: Int,
         val downloadQuality: Int,
+        val dynamicColor: Boolean,
     )
 
     suspend fun snapshot(): Snapshot {
@@ -67,6 +71,7 @@ class SettingsRepository(private val context: Context) {
             notificationsEnabled = prefs[Keys.NOTIFICATIONS] ?: true,
             refreshIntervalHours = prefs[Keys.REFRESH_INTERVAL] ?: 6,
             downloadQuality = prefs[Keys.DOWNLOAD_QUALITY] ?: 1080,
+            dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: true,
         )
     }
 }

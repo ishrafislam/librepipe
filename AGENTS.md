@@ -39,6 +39,12 @@ LibrePipe — single-module Android app (`:app`), Kotlin + Jetpack Compose (Mate
 - Channel "Videos" tab items have `uploaderName = null` — the new `lockupViewModel` layout omits the uploader row on a channel's own videos.
 - `parseMusicItem` uploaderName is the type label ("Song") — WEB_REMIX search lists prepend the type to the artist column; recognized as cosmetic.
 - `lint { abortOnError = false }` in `app/build.gradle.kts` is intentional.
+- Search filter chips are rendered whenever the search query is non-blank (suggestions + results share the chip row); tapping a chip runs `vm.search(filter)`. That is what the Maestro flows rely on (they never submit via keyboard).
+- `LpSearchBar`'s `BasicTextField` is `singleLine = true` and routes `KeyboardActions.onSearch` — Enter submits the query instead of inserting a newline. Removing `singleLine` breaks IME-search flows and newline-pollutes queries.
+- Library is a playlists grid; **History and Downloads are `LpIconAction`s in the Library top bar**, not tabs. They navigate to pushed `Routes.HISTORY`/`Routes.DOWNLOADS`.
+- Channel page has Videos/About tabs only — no Playlists tab (`ChannelFeed` has no playlist section).
+- Dynamic color is opt-out: `SettingsRepository.DYNAMIC_COLOR` defaults to `true`. With the emulator's wallpaper the rendered palette won't match board hexes until "Dynamic colours" is toggled off in Settings (verified: fixed palette = `#FBFCFE` surface, `#EFF1F4` surfaceContainer, `#D2E7F9` selected pill).
+- Unread badge model: `subscriptions.lastCheckedAt > lastVisitedAt` (room COUNT in `SubscriptionDao.observeUnreadCount`). Marked seen = `markAllSeen`/`markChannelSeen`.
 
 ## If extraction breaks (API drift)
 

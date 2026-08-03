@@ -10,9 +10,13 @@ import app.librepipes.data.db.GroupEntity
 import app.librepipes.data.db.HistoryEntity
 import app.librepipes.data.db.LocalPlaylistEntity
 import app.librepipes.data.db.SubscriptionEntity
+import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.DownloadState
 import app.librepipes.data.model.StreamRef
 import app.librepipes.di.AppContainer
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -20,25 +24,68 @@ import kotlinx.coroutines.launch
 
 class LibraryViewModel(private val container: AppContainer) : ViewModel() {
 
-    data class HistoryEntry(val ref: StreamRef?, val entity: HistoryEntity)
-    data class DownloadEntry(val ref: StreamRef?, val entity: DownloadEntity)
-
-    var history by mutableStateOf<List<HistoryEntry>>(emptyList())
-        private set
     var playlists by mutableStateOf<List<LocalPlaylistEntity>>(emptyList())
         private set
-    var downloads by mutableStateOf<List<DownloadEntry>>(emptyList())
+    var itemCounts by mutableStateOf<Map<Long, Int>>(emptyMap())
+        private set
+
+    init {
+        viewModelScope.launch {
+            container.playlists.observePlaylists().collect { playlists = it }
+        }
+        viewModelScope.launch {
+            container.playlists.observeCounts().collect { counts ->
+                itemCounts = counts.associate { it.playlistId to it.count }
+            }
+        }
+    }
+
+    fun createPlaylist(name: String) = viewModelScope.launch { container.playlists.create(name) }
+
+    fun renamePlaylist(id: Long, name: String) = viewModelScope.launch { container.playlists.rename(id, name) }
+
+    fun deletePlaylist(id: Long) = viewModelScope.launch { container.playlists.delete(id) }
+}
+
+// -------------------------------------------------------------------- History
+
+class HistoryViewModel(private val container: AppContainer) : ViewModel() {
+
+    data class HistoryEntry(val ref: StreamRef?, val entity: HistoryEntity)
+
+    var entries by mutableStateOf<List<HistoryEntry>>(emptyList())
+        private set
+    var recording by mutableStateOf(true)
         private set
 
     init {
         viewModelScope.launch {
             container.history.observeRecent(100).collect { list ->
-                history = list.map { HistoryEntry(StreamRef.fromJson(it.streamJson), it) }
+                entries = list.map { HistoryEntry(StreamRef.fromJson(it.streamJson), it) }
             }
         }
         viewModelScope.launch {
-            container.playlists.observePlaylists().collect { playlists = it }
+            container.settings.recordHistory.collect { recording = it }
         }
+    }
+
+    fun setRecording(value: Boolean) = viewModelScope.launch { container.settings.setRecordHistory(value) }
+
+    fun clear() = viewModelScope.launch { container.history.clear() }
+
+    fun remove(streamId: String) = viewModelScope.launch { container.history.deleteByStreamId(streamId) }
+}
+
+// ------------------------------------------------------------------ Downloads
+
+class DownloadsViewModel(private val container: AppContainer) : ViewModel() {
+
+    data class DownloadEntry(val ref: StreamRef?, val entity: DownloadEntity)
+
+    var downloads by mutableStateOf<List<DownloadEntry>>(emptyList())
+        private set
+
+    init {
         viewModelScope.launch {
             container.downloads.observeAll().collect { list ->
                 downloads = list.map { DownloadEntry(StreamRef.fromJson(it.streamJson), it) }
@@ -46,26 +93,20 @@ class LibraryViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun clearHistory() = viewModelScope.launch { container.history.clear() }
+    fun delete(id: Long) = viewModelScope.launch { container.downloadManager.remove(id) }
 
-    fun removeHistory(streamId: String) = viewModelScope.launch { container.history.deleteByStreamId(streamId) }
-
-    fun createPlaylist(name: String) = viewModelScope.launch { container.playlists.create(name) }
-
-    fun renamePlaylist(id: Long, name: String) = viewModelScope.launch { container.playlists.rename(id, name) }
-
-    fun deletePlaylist(id: Long) = viewModelScope.launch { container.playlists.delete(id) }
-
-    fun removePlaylistItem(itemId: Long) = viewModelScope.launch { container.playlists.removeItem(itemId) }
-
-    fun deleteDownload(id: Long) = viewModelScope.launch { container.downloadManager.remove(id) }
-
-    fun cancelDownload(id: Long) {
+    fun cancel(id: Long) {
         container.downloadManager.cancel(id)
         viewModelScope.launch { container.downloads.updateState(id, DownloadState.CANCELLED) }
     }
 
-    fun retryDownload(id: Long) = viewModelScope.launch { container.downloadManager.retry(id) }
+    fun retry(id: Long) = viewModelScope.launch { container.downloadManager.retry(id) }
+
+    fun clear() = viewModelScope.launch {
+        container.downloads.observeAll().collect { list ->
+            list.forEach { container.downloadManager.remove(it.id) }
+        }
+    }
 }
 
 // ------------------------------------------------------------- Subscriptions
@@ -73,6 +114,7 @@ class LibraryViewModel(private val container: AppContainer) : ViewModel() {
 class SubscriptionsViewModel(private val container: AppContainer) : ViewModel() {
 
     data class ChannelItem(val subscription: SubscriptionEntity, val groupIds: List<Long>)
+    data class UploadItem(val ref: StreamRef, val channel: SubscriptionEntity, val isNew: Boolean)
 
     var channels by mutableStateOf<List<ChannelItem>>(emptyList())
         private set
@@ -81,6 +123,12 @@ class SubscriptionsViewModel(private val container: AppContainer) : ViewModel() 
     var loading by mutableStateOf(true)
         private set
     var selectedGroupId by mutableStateOf<Long?>(null)
+    var uploads by mutableStateOf<List<UploadItem>>(emptyList())
+        private set
+    var uploadsLoading by mutableStateOf(false)
+        private set
+
+    private var feedsFetched = false
 
     init {
         viewModelScope.launch {
@@ -98,12 +146,58 @@ class SubscriptionsViewModel(private val container: AppContainer) : ViewModel() 
                     }
                     groups = gs
                     loading = false
+                    if (subs.isNotEmpty() && !feedsFetched) {
+                        feedsFetched = true
+                        refreshUploads()
+                    }
                 }
         }
     }
 
     fun selectGroup(groupId: Long?) {
         selectedGroupId = groupId
+    }
+
+    fun refreshUploads() {
+        val subs = channels.map { it.subscription }
+        if (subs.isEmpty()) {
+            uploads = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            uploadsLoading = true
+            val items = coroutineScope {
+                subs.take(20).map { sub ->
+                    async {
+                        runCatching {
+                            val feed = Extractor.channel(sub.channelUrl)
+                            feed.loadInitial()
+                            feed.videos.firstOrNull()?.let { first ->
+                                UploadItem(
+                                    ref = first,
+                                    channel = sub,
+                                    isNew = sub.lastCheckedAt > sub.lastVisitedAt && first.id == sub.latestStreamId,
+                                )
+                            }
+                        }.getOrNull()
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            uploads = items
+            uploadsLoading = false
+        }
+    }
+
+    fun markAllSeen() = viewModelScope.launch {
+        container.subscriptions.markAllVisited(System.currentTimeMillis())
+        uploads = uploads.map { it.copy(isNew = false) }
+    }
+
+    fun markChannelSeen(channelUrl: String) = viewModelScope.launch {
+        container.subscriptions.markVisited(channelUrl, System.currentTimeMillis())
+        uploads = uploads.map {
+            if (it.channel.channelUrl == channelUrl) it.copy(isNew = false) else it
+        }
     }
 
     fun createGroup(name: String) = viewModelScope.launch { container.groups.createGroup(name) }
@@ -156,6 +250,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val settings = container.settings
 
     fun setTheme(value: Int) = viewModelScope.launch { settings.setTheme(value) }
+    fun setDynamicColor(value: Boolean) = viewModelScope.launch { settings.setDynamicColor(value) }
     fun setMaxQuality(value: Int) = viewModelScope.launch { settings.setMaxQuality(value) }
     fun setAudioOnly(value: Boolean) = viewModelScope.launch { settings.setAudioOnly(value) }
     fun setCaptionsEnabled(value: Boolean) = viewModelScope.launch { settings.setCaptionsEnabled(value) }

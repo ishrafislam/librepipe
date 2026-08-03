@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowDropDown
@@ -59,6 +61,8 @@ fun LpSearchBar(
     modifier: Modifier = Modifier,
     placeholder: String = "Search Librepipe",
     onBack: (() -> Unit)? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     val colors = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
@@ -111,6 +115,9 @@ fun LpSearchBar(
                     lineHeight = MaterialTheme.typography.bodyLarge.lineHeight,
                 ),
                 cursorBrush = SolidColor(colors.primary),
+                singleLine = true,
+                keyboardOptions = keyboardOptions,
+                keyboardActions = keyboardActions,
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty() && !focused) {

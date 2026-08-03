@@ -36,5 +36,11 @@ class SubscriptionRepository(private val dao: SubscriptionDao) {
         dao.updateChecked(channelUrl, latestStreamId, checkedAt)
     }
 
+    suspend fun markVisited(channelUrl: String, visitedAt: Long) = dao.updateVisited(channelUrl, visitedAt)
+
+    suspend fun markAllVisited(visitedAt: Long) = dao.markAllVisited(visitedAt)
+
+    fun observeUnreadCount(): Flow<Int> = dao.observeUnreadCount()
+
     suspend fun count(): Int = dao.count()
 }
