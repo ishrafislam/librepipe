@@ -2,6 +2,7 @@ package app.librepipes.ui.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -67,6 +68,15 @@ class WatchViewModel(
     /** The connected session, for `PlayerView` to render. Null until the connect lands. */
     var player by mutableStateOf<Player?>(null)
         private set
+    /** Resolutions this video offers, highest first. */
+    var availableHeights by mutableStateOf<List<Int>>(emptyList())
+        private set
+    var currentHeight by mutableStateOf(0)
+        private set
+    var playbackSpeed by mutableStateOf(1f)
+        private set
+    var captionsOn by mutableStateOf(false)
+        private set
 
     private var controller: MediaController? = null
     private var chapterSeconds: List<Long> = emptyList()
@@ -81,7 +91,20 @@ class WatchViewModel(
             connect()
         }
         viewModelScope.launch {
-            runCatching { Extractor.stream(initialRef.url) }.getOrNull()?.let { info = it }
+            runCatching { Extractor.stream(initialRef.url) }.getOrNull()?.let { stream ->
+                info = stream
+                availableHeights = Playback.availableHeights(stream)
+                val settings = container.settings.snapshot()
+                currentHeight = Playback
+                    .selectStreams(stream, settings.audioOnly || initialRef.isAudio, settings.maxQuality)
+                    .height
+                captionsOn = settings.captionsEnabled
+                applyCaptions(settings.captionsEnabled)
+            }
+        }
+        viewModelScope.launch {
+            playbackSpeed = container.settings.snapshot().playbackSpeed
+            controller?.setPlaybackSpeed(playbackSpeed)
         }
         viewModelScope.launch {
             runCatching { Extractor.watchNext(initialRef.url) }.getOrNull()?.let { watchNext = it }
@@ -120,6 +143,50 @@ class WatchViewModel(
         if (d > 0) c.seekTo((d * fraction.coerceIn(0f, 1f)).toLong())
     }
 
+    /**
+     * Rebuilds the current item at [height]. Without a DASH manifest there is no
+     * seamless track switch, so this reloads and re-seeks — hence capturing position
+     * and play state first, or a paused video would silently resume.
+     */
+    fun setQuality(height: Int) {
+        val c = controller ?: return
+        val stream = info ?: return
+        viewModelScope.launch {
+            container.settings.setMaxQuality(height)
+            val position = c.currentPosition
+            val wasPlaying = c.isPlaying
+            val audioOnly = container.settings.snapshot().audioOnly || ref.isAudio
+            val item = Playback.buildItem(stream, ref, audioOnly, height)
+            c.setMediaItem(item, position)
+            c.prepare()
+            if (wasPlaying) c.play()
+            currentHeight = Playback.selectStreams(stream, audioOnly, height).height
+            applyCaptions(captionsOn)
+        }
+    }
+
+    fun changeSpeed(value: Float) {
+        playbackSpeed = value
+        controller?.setPlaybackSpeed(value)
+        viewModelScope.launch { container.settings.setPlaybackSpeed(value) }
+    }
+
+    fun toggleCaptions() {
+        val on = !captionsOn
+        captionsOn = on
+        applyCaptions(on)
+        viewModelScope.launch { container.settings.setCaptionsEnabled(on) }
+    }
+
+    /** Text tracks are always attached; this flips whether they render. */
+    private fun applyCaptions(on: Boolean) {
+        val c = controller ?: return
+        val params = c.trackSelectionParameters
+        c.trackSelectionParameters = params.buildUpon()
+            .setDisabledTrackTypes(if (on) emptySet() else setOf(C.TRACK_TYPE_TEXT))
+            .build()
+    }
+
     fun download() = viewModelScope.launch {
         container.downloadManager.enqueue(ref, DownloadMode.VIDEO)
     }
@@ -152,6 +219,8 @@ class WatchViewModel(
         val c = runCatching { PlaybackOpener.connect(container.appContext) }.getOrNull() ?: return
         controller = c
         player = c
+        c.setPlaybackSpeed(playbackSpeed)
+        applyCaptions(captionsOn)
         c.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) = refresh(player)
 

@@ -23,6 +23,15 @@ import java.util.Locale
 object Playback {
 
     const val EXTRA_REF_JSON = "stream_ref_json"
+
+    /**
+     * Audio track URL for adaptive playback. YouTube only ships one progressive
+     * (audio+video) format — itag 18 at 360p — so anything above that is a video-only
+     * stream that has to be merged with a separate audio stream. `PlaybackService`
+     * reads this and builds a `MergingMediaSource`.
+     */
+    const val EXTRA_AUDIO_URL = "stream_audio_url"
+
     const val MAX_QUEUE = 40
 
     data class Resolved(
@@ -40,7 +49,6 @@ object Playback {
         val container = (context.applicationContext as LibrePipeApp).container
         val settings = container.settings.snapshot()
         val audioOnly = settings.audioOnly || first.isAudio
-        val captionsOn = settings.captionsEnabled && !audioOnly
 
         val streamInfo = Extractor.stream(first.url)
 
@@ -63,13 +71,13 @@ object Playback {
             } ?: 0L
         } else 0L
 
-        val items = mutableListOf(buildItem(streamInfo, first, audioOnly, captionsOn, settings.maxQuality))
+        val items = mutableListOf(buildItem(streamInfo, first, audioOnly, settings.maxQuality))
 
         val remaining = queue.filter { it.id != first.id }.take(MAX_QUEUE)
         for (ref in remaining) {
             val item = runCatching {
                 val info = Extractor.stream(ref.url)
-                if (info.premiereAt != null) null else buildItem(info, ref, audioOnly, captionsOn, settings.maxQuality)
+                if (info.premiereAt != null) null else buildItem(info, ref, audioOnly, settings.maxQuality)
             }.getOrNull()
             if (item != null) items += item
         }
@@ -83,64 +91,83 @@ object Playback {
         )
     }
 
-    private fun buildItem(
+    /** Video URL plus, for adaptive playback, the audio URL to merge with it. */
+    data class Selection(val videoUrl: String, val audioUrl: String?, val height: Int)
+
+    fun buildItem(
         info: StreamInfo,
         ref: StreamRef,
         audioOnly: Boolean,
-        captionsOn: Boolean,
         maxHeight: Int,
     ): MediaItem {
-        val url = selectUrl(info, audioOnly, maxHeight)
+        val selection = selectStreams(info, audioOnly, maxHeight)
 
         val metadata = MediaMetadata.Builder()
             .setTitle(ref.title)
             .setArtist(ref.uploaderName)
             .setArtworkUri(ref.thumbnailUrl?.let { Uri.parse(it) })
-            .setExtras(Bundle().apply { putString(EXTRA_REF_JSON, ref.toJson()) })
+            .setExtras(
+                Bundle().apply {
+                    putString(EXTRA_REF_JSON, ref.toJson())
+                    selection.audioUrl?.let { putString(EXTRA_AUDIO_URL, it) }
+                },
+            )
             .build()
 
         val builder = MediaItem.Builder()
             .setMediaId(ref.id)
-            .setUri(url)
+            .setUri(selection.videoUrl)
             .setMediaMetadata(metadata)
 
-        if (captionsOn && !ref.isLive) {
+        // Always attach the tracks; visibility is controlled by disabledTrackTypes.
+        // Gating attachment on the setting made the in-player toggle a no-op.
+        if (!ref.isLive) {
             val subtitles = buildSubtitles(info)
             if (subtitles.isNotEmpty()) builder.setSubtitleConfigurations(subtitles)
         }
         return builder.build()
     }
 
-    private fun selectUrl(info: StreamInfo, audioOnly: Boolean, maxHeight: Int): String {
-        val isLive = info.streamType == StreamType.LIVE
+    /**
+     * Resolutions offered for [info], highest first. Only progressive formats for now —
+     * listing the adaptive heights would offer resolutions that 403 on playback.
+     */
+    fun availableHeights(info: StreamInfo): List<Int> {
+        if (info.streamType != StreamType.NORMAL) return emptyList()
+        return info.videoStreams.map { heightOf(it) }.filter { it > 0 }.distinct().sortedDescending()
+    }
 
+    fun selectStreams(info: StreamInfo, audioOnly: Boolean, maxHeight: Int): Selection {
         if (audioOnly || info.streamType == StreamType.AUDIO) {
             val audio = info.audioStreams.maxByOrNull { it.bitrate }
-            return audio?.url
+            val url = audio?.url
                 ?: info.videoStreams.firstOrNull()?.url
                 ?: info.hlsUrl
                 ?: info.url
+            return Selection(url, null, 0)
         }
 
-        if (isLive) {
-            return info.hlsUrl ?: bestProgressive(info) ?: info.url
+        if (info.streamType == StreamType.LIVE) {
+            // Live is a single manifest carrying both tracks — never merge.
+            val url = info.hlsUrl ?: bestProgressive(info) ?: info.url
+            return Selection(url, null, 0)
         }
 
-        // Progressive formats carry audio+video combined — ideal for playback.
+        val cap = if (maxHeight > 0) maxHeight else Int.MAX_VALUE
+
+        // Progressive only, deliberately. The video-only adaptive streams are DASH
+        // segment streams: googlevideo 403s a range-less request for them (which is
+        // ExoPlayer's first read) and also 403s any deep byte offset, so they cannot
+        // be played as flat files no matter how the requests are chunked. Reaching
+        // them needs a generated DASH manifest — tracked separately.
         val progressive = info.videoStreams
-        val withinLimit = progressive.filter { heightOf(it) in 1..maxHeight }
-        val mp4WithinLimit = withinLimit
-            .filter { it.suffix.equals("mp4", ignoreCase = true) }
-            .maxByOrNull { heightOf(it) }
-        val best = mp4WithinLimit
-            ?: withinLimit.maxByOrNull { heightOf(it) }
+        val best = progressive.filter { heightOf(it) in 1..cap }.maxByOrNull { heightOf(it) }
             ?: progressive.maxByOrNull { heightOf(it) }
-        if (best != null) return best.url
+        if (best != null) return Selection(best.url, null, heightOf(best))
 
-        // No combined format: fall back to the DASH manifest (handles A/V sync).
-        if (!info.dashMpdUrl.isNullOrBlank()) return info.dashMpdUrl
+        if (!info.dashMpdUrl.isNullOrBlank()) return Selection(info.dashMpdUrl, null, 0)
 
-        return info.videoOnlyStreams.firstOrNull()?.url ?: info.url
+        return Selection(info.videoOnlyStreams.firstOrNull()?.url ?: info.url, null, 0)
     }
 
     private fun bestProgressive(info: StreamInfo): String? =

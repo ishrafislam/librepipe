@@ -308,11 +308,17 @@ private fun MainScreen(
 
     val onWatchRoute = currentRoute == Routes.WATCH
     var fullscreen by remember { mutableStateOf(false) }
+    var locked by remember { mutableStateOf(false) }
     // Rotating to landscape while watching enters fullscreen on its own; leaving the
     // route or returning to portrait exits it.
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     LaunchedEffect(onWatchRoute, landscape) {
-        if (!onWatchRoute) fullscreen = false else if (landscape) fullscreen = true
+        if (!onWatchRoute) {
+            fullscreen = false
+            locked = false
+        } else if (landscape) {
+            fullscreen = true
+        }
     }
     LaunchedEffect(fullscreen) { onFullscreenChanged(fullscreen) }
     LaunchedEffect(onWatchRoute) { onWatchActiveChanged(onWatchRoute) }
@@ -342,6 +348,8 @@ private fun MainScreen(
                 pipMode = pipMode,
                 onEnterPip = onEnterPip,
                 onToggleFullscreen = { fullscreen = !fullscreen },
+                locked = locked,
+                onSetLocked = { locked = it },
             )
         } else if (wide) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -362,6 +370,8 @@ private fun MainScreen(
                         pipMode = pipMode,
                         onEnterPip = onEnterPip,
                         onToggleFullscreen = { fullscreen = !fullscreen },
+                        locked = locked,
+                        onSetLocked = { locked = it },
                     )
                     if (!onWatchRoute) MiniPlayerHost(onOpen = openMiniPlayer)
                 }
@@ -396,6 +406,8 @@ private fun MainScreen(
                     pipMode = pipMode,
                     onEnterPip = onEnterPip,
                     onToggleFullscreen = { fullscreen = !fullscreen },
+                    locked = locked,
+                    onSetLocked = { locked = it },
                 )
             }
         }
@@ -432,6 +444,8 @@ private fun AppNavHost(
     pipMode: Boolean,
     onEnterPip: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    locked: Boolean,
+    onSetLocked: (Boolean) -> Unit,
 ) {
     NavHost(
         navController = navController,
@@ -456,9 +470,11 @@ private fun AppNavHost(
                 vm = appViewModel { WatchViewModel(it, ref, request?.second.orEmpty()) },
                 fullscreen = fullscreen,
                 pipMode = pipMode,
+                locked = locked,
                 onMinimize = { navController.popBackStack() },
                 onEnterPip = onEnterPip,
                 onToggleFullscreen = onToggleFullscreen,
+                onSetLocked = onSetLocked,
                 onOpenChannel = openChannel,
             )
         }

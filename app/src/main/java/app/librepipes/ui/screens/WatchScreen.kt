@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -64,6 +65,8 @@ import app.librepipes.ui.components.AddToPlaylistDialog
 import app.librepipes.ui.components.kit.LpChannelRow
 import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpSeekBar
+import app.librepipes.ui.components.kit.LpSheet
+import app.librepipes.ui.components.kit.LpSwitch
 import app.librepipes.ui.theme.Spacing
 import app.librepipes.ui.viewmodels.WatchViewModel
 import app.librepipes.util.Format
@@ -78,9 +81,11 @@ fun WatchScreen(
     vm: WatchViewModel,
     fullscreen: Boolean,
     pipMode: Boolean,
+    locked: Boolean,
     onMinimize: () -> Unit,
     onEnterPip: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onSetLocked: (Boolean) -> Unit,
     onOpenChannel: (String) -> Unit,
 ) {
     // In PiP the system shows only our window content, so render the bare surface.
@@ -89,8 +94,10 @@ fun WatchScreen(
         return
     }
 
-    // Back leaves fullscreen first; only a second press pops the route.
-    BackHandler(enabled = fullscreen) { onToggleFullscreen() }
+    // Order matters: unlocking must win over leaving fullscreen, or back would escape
+    // a screen the user deliberately locked.
+    BackHandler(enabled = fullscreen && !locked) { onToggleFullscreen() }
+    BackHandler(enabled = locked) { onSetLocked(false) }
 
     Column(
         modifier = Modifier
@@ -100,9 +107,12 @@ fun WatchScreen(
         VideoBox(
             vm = vm,
             fullscreen = fullscreen,
+            locked = locked,
             onMinimize = onMinimize,
             onEnterPip = onEnterPip,
             onToggleFullscreen = onToggleFullscreen,
+            onLock = { onSetLocked(true) },
+            onUnlock = { onSetLocked(false) },
             modifier = if (fullscreen) Modifier.weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
         )
         if (!fullscreen) {
@@ -115,12 +125,16 @@ fun WatchScreen(
 private fun VideoBox(
     vm: WatchViewModel,
     fullscreen: Boolean,
+    locked: Boolean,
     onMinimize: () -> Unit,
     onEnterPip: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onLock: () -> Unit,
+    onUnlock: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var overlayVisible by remember { mutableStateOf(true) }
+    var showOptions by remember { mutableStateOf(false) }
     // Any interaction restarts the countdown; a paused video keeps its controls, since
     // hiding them there would leave the user with nothing to press.
     var lastTouch by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -142,6 +156,7 @@ private fun VideoBox(
     ) {
         val error = vm.error
         val premiere = vm.premiereAt
+        val chromeVisible = overlayVisible && error == null && premiere == null
         when {
             error != null -> PlayerErrorFrame(error)
             premiere != null -> PremiereFrame(vm.ref, premiere)
@@ -156,7 +171,7 @@ private fun VideoBox(
         }
 
         AnimatedVisibility(
-            visible = overlayVisible && error == null && premiere == null,
+            visible = chromeVisible && !locked,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -166,9 +181,43 @@ private fun VideoBox(
                 onMinimize = onMinimize,
                 onEnterPip = onEnterPip,
                 onToggleFullscreen = onToggleFullscreen,
+                onOpenOptions = { showOptions = true },
                 onInteract = { lastTouch = System.currentTimeMillis() },
             )
         }
+
+        // Locked: no controls at all, just a way back out. Shares the 3s timer so a
+        // locked screen actually stays clean.
+        AnimatedVisibility(
+            visible = chromeVisible && locked,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Text(
+                text = "Tap to unlock",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                modifier = Modifier
+                    .padding(bottom = Spacing.space6)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .clickable { onUnlock() }
+                    .padding(horizontal = Spacing.space4, vertical = 10.dp),
+            )
+        }
+    }
+
+    if (showOptions) {
+        PlayerOptionsSheet(
+            vm = vm,
+            onDismiss = { showOptions = false },
+            onLock = {
+                showOptions = false
+                if (!fullscreen) onToggleFullscreen()
+                onLock()
+            },
+        )
     }
 }
 
@@ -201,6 +250,7 @@ private fun PlayerOverlay(
     onMinimize: () -> Unit,
     onEnterPip: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onOpenOptions: () -> Unit,
     onInteract: () -> Unit,
 ) {
     Box(
@@ -226,7 +276,7 @@ private fun PlayerOverlay(
             OverlayIcon(
                 icon = Icons.Rounded.MoreVert,
                 contentDescription = "More options",
-                onClick = onInteract,
+                onClick = { onInteract(); onOpenOptions() },
             )
         }
 
@@ -281,6 +331,141 @@ private fun PlayerOverlay(
         }
     }
 }
+
+private enum class OptionsPage { MENU, QUALITY, SPEED }
+
+private val SPEEDS = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+
+/**
+ * Player options. Quality and speed swap the sheet's contents in place rather than
+ * stacking a second sheet on top of the first.
+ */
+@Composable
+private fun PlayerOptionsSheet(
+    vm: WatchViewModel,
+    onDismiss: () -> Unit,
+    onLock: () -> Unit,
+) {
+    var page by remember { mutableStateOf(OptionsPage.MENU) }
+    LpSheet(
+        title = when (page) {
+            OptionsPage.MENU -> "Options"
+            OptionsPage.QUALITY -> "Quality"
+            OptionsPage.SPEED -> "Playback speed"
+        },
+        onDismiss = onDismiss,
+    ) {
+        when (page) {
+            OptionsPage.MENU -> {
+                OptionRow(
+                    label = "Quality",
+                    value = vm.currentHeight.takeIf { it > 0 }?.let { "${it}p" },
+                    enabled = vm.availableHeights.isNotEmpty(),
+                    onClick = { page = OptionsPage.QUALITY },
+                )
+                OptionRow(
+                    label = "Playback speed",
+                    value = speedLabel(vm.playbackSpeed),
+                    onClick = { page = OptionsPage.SPEED },
+                )
+                OptionRow(
+                    label = "Captions",
+                    onClick = { vm.toggleCaptions() },
+                    trailing = {
+                        LpSwitch(checked = vm.captionsOn, onCheckedChange = { vm.toggleCaptions() })
+                    },
+                )
+                OptionRow(label = "Lock screen", onClick = onLock)
+            }
+
+            OptionsPage.QUALITY -> vm.availableHeights.forEach { height ->
+                ChoiceRow(
+                    label = "${height}p",
+                    selected = height == vm.currentHeight,
+                    onClick = {
+                        vm.setQuality(height)
+                        onDismiss()
+                    },
+                )
+            }
+
+            OptionsPage.SPEED -> SPEEDS.forEach { value ->
+                ChoiceRow(
+                    label = speedLabel(value),
+                    selected = value == vm.playbackSpeed,
+                    onClick = {
+                        vm.changeSpeed(value)
+                        onDismiss()
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(
+    label: String,
+    onClick: () -> Unit,
+    value: String? = null,
+    enabled: Boolean = true,
+    trailing: @Composable (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = Spacing.space6, vertical = Spacing.space4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.weight(1f),
+        )
+        if (value != null) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        trailing?.invoke()
+    }
+}
+
+@Composable
+private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = Spacing.space6, vertical = Spacing.space4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+private fun speedLabel(value: Float): String =
+    if (value == value.toInt().toFloat()) "${value.toInt()}.0x" else "${value}x"
 
 @Composable
 private fun OverlayIcon(
