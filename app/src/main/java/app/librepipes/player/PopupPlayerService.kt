@@ -1,25 +1,25 @@
 package app.librepipes.player
 
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.IBinder
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.ImageButton
-import androidx.annotation.OptIn
-import androidx.core.content.ContextCompat
 import com.google.common.util.concurrent.ListenableFuture
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ComposeView
+import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import androidx.media3.ui.PlayerView
 import app.librepipes.R
 import app.librepipes.data.model.StreamRef
 import kotlinx.coroutines.CoroutineScope
@@ -29,8 +29,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Floating popup player. Renders the shared [PlaybackService] session inside a
- * draggable, resizable overlay window. Requires the "display over other apps"
- * permission, which is requested before this service is started.
+ * draggable, resizable overlay window with kit Compose chrome. Requires the
+ * "display over other apps" permission, requested before the service starts.
  */
 class PopupPlayerService : android.app.Service() {
 
@@ -42,11 +42,14 @@ class PopupPlayerService : android.app.Service() {
     }
 
     private var windowManager: WindowManager? = null
-    private var overlayView: FrameLayout? = null
+    private var overlayView: ComposeView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var stopRequested = false
+
+    private var isPlaying by mutableStateOf(false)
+    private var attachedPlayer by mutableStateOf<Player?>(null)
 
     private var dragStartX = 0f
     private var dragStartY = 0f
@@ -55,7 +58,6 @@ class PopupPlayerService : android.app.Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopPopup(pause = true)
@@ -69,14 +71,13 @@ class PopupPlayerService : android.app.Service() {
     }
 
     private fun buildNotification(): android.app.Notification {
-        val channelId = "popup"
         val stopIntent = android.app.PendingIntent.getService(
             this,
             0,
             Intent(this, PopupPlayerService::class.java).setAction(ACTION_STOP),
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return androidx.core.app.NotificationCompat.Builder(this, channelId)
+        return androidx.core.app.NotificationCompat.Builder(this, app.librepipes.notify.NotificationChannels.POPUP)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getString(R.string.app_name))
             .setContentText("Popup player active")
@@ -90,9 +91,20 @@ class PopupPlayerService : android.app.Service() {
         val queue = intent?.getStringArrayListExtra(EXTRA_QUEUE_JSON)
             ?.mapNotNull { StreamRef.fromJson(it) } ?: emptyList()
 
-        val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
-        val view = inflater.inflate(R.layout.popup_player, null) as FrameLayout
-        overlayView = view
+        val composeView = ComposeView(this).apply {
+            setContent {
+                androidx.compose.material3.MaterialTheme {
+                    PopupPlayerSurface(
+                        isPlaying = isPlaying,
+                        onPlayPause = { controller?.playOrPause() },
+                        onExpand = { expandToFull() },
+                        onClose = { stopPopup(pause = true) },
+                        player = attachedPlayer,
+                    )
+                }
+            }
+        }
+        overlayView = composeView
 
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager = wm
@@ -109,14 +121,15 @@ class PopupPlayerService : android.app.Service() {
             x = (12 * density).toInt()
             y = (96 * density).toInt()
         }
-        wm.addView(view, layoutParams)
+        wm.addView(composeView, layoutParams)
 
-        attachHandlers(view)
-        connectController(view, ref, queue)
+        attachHandlers(composeView)
+        connectController(ref, queue)
     }
 
+    @SuppressLint("UnsafeOptInUsageError")
     @OptIn(UnstableApi::class)
-    private fun connectController(view: FrameLayout, ref: StreamRef?, queue: List<StreamRef>) {
+    private fun connectController(ref: StreamRef?, queue: List<StreamRef>) {
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
@@ -124,14 +137,10 @@ class PopupPlayerService : android.app.Service() {
             {
                 val connected = future.get()
                 this.controller = connected
-                val playerView = view.findViewById<PlayerView>(R.id.popup_player_view)
-                playerView.player = connected
-                val playPause = view.findViewById<ImageButton>(R.id.btn_play_pause)
+                attachedPlayer = connected
                 connected.addListener(object : Player.Listener {
-                    override fun onIsPlayingChanged(isPlaying: Boolean) {
-                        playPause.setImageResource(
-                            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
-                        )
+                    override fun onIsPlayingChanged(playing: Boolean) {
+                        isPlaying = playing
                     }
                 })
                 if (ref != null) {
@@ -144,25 +153,19 @@ class PopupPlayerService : android.app.Service() {
         )
     }
 
-    private fun attachHandlers(view: FrameLayout) {
-        val playPause = view.findViewById<ImageButton>(R.id.btn_play_pause)
-        val close = view.findViewById<ImageButton>(R.id.btn_close)
-        val expand = view.findViewById<ImageButton>(R.id.btn_expand)
-
-        playPause.setOnClickListener { controller?.playOrPause() }
-        close.setOnClickListener { stopPopup(pause = true) }
-        expand.setOnClickListener {
-            val current = controller?.currentMediaItem
-            if (current != null) {
-                val refJson = current.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
-                val intent = Intent(this, NowPlayingActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (refJson != null) intent.putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, refJson)
-                startActivity(intent)
-            }
-            stopPopup(pause = false)
+    private fun expandToFull() {
+        val current = controller?.currentMediaItem
+        if (current != null) {
+            val refJson = current.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
+            val intent = Intent(this, NowPlayingActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (refJson != null) intent.putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, refJson)
+            startActivity(intent)
         }
+        stopPopup(pause = false)
+    }
 
+    private fun attachHandlers(view: ComposeView) {
         val scaleDetector = ScaleGestureDetector(
             this,
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -209,6 +212,7 @@ class PopupPlayerService : android.app.Service() {
         if (stopRequested) return
         stopRequested = true
         if (pause) controller?.pause()
+        attachedPlayer = null
         controller = null
         // releaseFuture releases the controller returned by the future — the single
         // authoritative release point (avoid double-releasing the controller).

@@ -2,6 +2,7 @@ package app.librepipes.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -44,14 +45,16 @@ import androidx.compose.ui.unit.dp
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.ChannelRef
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.EmptyState
-import app.librepipes.ui.components.ErrorState
 import app.librepipes.ui.components.kit.LpChannelRow
+import app.librepipes.ui.components.kit.LpEmptyState
+import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpFilterChip
+import app.librepipes.ui.components.kit.LpListSkeleton
 import app.librepipes.ui.components.kit.LpPlaylistRow
 import app.librepipes.ui.components.kit.LpSearchBar
 import app.librepipes.ui.components.kit.LpSheet
 import app.librepipes.ui.components.kit.LpVideoRow
+import app.librepipes.ui.components.kit.rememberDelayedSkeleton
 import app.librepipes.ui.theme.PlexMono
 import app.librepipes.ui.viewmodels.SearchViewModel
 import app.librepipes.util.Format
@@ -194,10 +197,10 @@ fun SearchScreen(
 private fun RecentsSection(vm: SearchViewModel, recents: List<app.librepipes.data.db.SearchHistoryEntity>) {
     val colors = MaterialTheme.colorScheme
     if (recents.isEmpty()) {
-        EmptyState(
+        LpEmptyState(
             icon = Icons.Rounded.Search,
             title = "Search Librepipe",
-            subtitle = "Find videos, channels and playlists across YouTube and YouTube Music.",
+            message = "Find videos, channels and playlists across YouTube and YouTube Music.",
         )
         return
     }
@@ -309,7 +312,7 @@ private fun ResultsSection(
     vm: SearchViewModel,
     items: List<Extractor.SearchItem>,
     loading: Boolean,
-    error: String?,
+    error: app.librepipes.util.AppError?,
     searched: Boolean,
     hasMore: Boolean,
     activeFilter: Extractor.SearchFilter,
@@ -318,23 +321,23 @@ private fun ResultsSection(
     onOpenChannel: (String) -> Unit,
     onOpenPlaylist: (String) -> Unit,
 ) {
+    val skeleton = rememberDelayedSkeleton(loading && items.isEmpty())
     when {
-            error != null && items.isEmpty() -> ErrorState(error, onRetry = { vm.search() })
+            error != null && items.isEmpty() -> LpErrorState(
+                message = error.message,
+                code = error.code,
+                onRetry = { vm.search() },
+            )
 
-            loading && items.isEmpty() -> {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
-            }
+            loading && items.isEmpty() ->
+                if (skeleton) LpListSkeleton() else Box(Modifier.fillMaxSize())
 
-            searched && items.isEmpty() -> EmptyState(
+            searched && items.isEmpty() -> LpEmptyState(
                 icon = Icons.Rounded.Search,
                 title = "No results",
-                subtitle = "Try different keywords or another filter.",
+                message = "Try different keywords or another filter.",
+                actionLabel = if (activeFilter == Extractor.SearchFilter.ALL) null else "Clear filters",
+                onAction = { vm.search(Extractor.SearchFilter.ALL) },
             )
 
             else -> {

@@ -38,8 +38,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.db.LocalPlaylistEntity
-import app.librepipes.ui.components.EmptyState
 import app.librepipes.ui.components.kit.LpDialog
+import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpIconAction
 import app.librepipes.ui.components.kit.LpOutlinedTextField
 import app.librepipes.ui.components.kit.LpSheet
@@ -71,10 +71,10 @@ fun LibraryScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             if (playlists.isEmpty()) {
-                EmptyState(
+                LpEmptyState(
                     icon = Icons.Rounded.PlaylistPlay,
                     title = "No playlists",
-                    subtitle = "Create a playlist and add videos to it.\nWatch history and downloads live in their own tabs.",
+                    message = "Create a playlist and add videos to it.\nWatch history and downloads live in their own tabs.",
                 )
             } else {
                 LazyVerticalGrid(

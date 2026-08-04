@@ -27,8 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.EmptyState
 import app.librepipes.ui.components.kit.LpDialog
+import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpIconAction
 import app.librepipes.ui.components.kit.LpOutlinedTextField
 import app.librepipes.ui.components.kit.LpTopBar
@@ -72,10 +72,10 @@ fun LocalPlaylistScreen(
         )
 
         if (refs.isEmpty()) {
-            EmptyState(
+            LpEmptyState(
                 icon = Icons.Rounded.PlayArrow,
                 title = "Empty playlist",
-                subtitle = "Add videos from their context menu.",
+                message = "Add videos from their context menu.",
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {

@@ -10,6 +10,7 @@ object NotificationChannels {
     const val UPLOADS = "uploads"
     const val DOWNLOADS = "downloads"
     const val POPUP = "popup"
+    const val PREMIERE = "premiere"
 
     fun create(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -35,6 +36,13 @@ object NotificationChannels {
                     "Popup player",
                     NotificationManager.IMPORTANCE_LOW,
                 ),
+                NotificationChannel(
+                    PREMIERE,
+                    context.getString(R.string.channel_premiere_name),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = context.getString(R.string.channel_premiere_desc)
+                },
             )
         )
     }

@@ -34,11 +34,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.ErrorState
-import app.librepipes.ui.components.LoadingState
+import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpIconAction
+import app.librepipes.ui.components.kit.LpListSkeleton
 import app.librepipes.ui.components.kit.LpTopBar
 import app.librepipes.ui.components.kit.LpVideoRow
+import app.librepipes.ui.components.kit.rememberDelayedSkeleton
 import app.librepipes.ui.theme.ShapeTokens
 import app.librepipes.ui.viewmodels.PlaylistViewModel
 import app.librepipes.util.Format
@@ -67,9 +68,14 @@ fun PlaylistScreen(
             }
     }
 
+    val skeleton = rememberDelayedSkeleton(loading && playlist == null)
     when {
-        loading && playlist == null -> LoadingState()
-        error != null && playlist == null -> ErrorState(error.orEmpty(), onRetry = { vm.load() })
+        loading && playlist == null -> if (skeleton) LpListSkeleton() else Box(Modifier.fillMaxSize())
+        error != null && playlist == null -> LpErrorState(
+            message = error?.message.orEmpty(),
+            code = error?.code,
+            onRetry = { vm.load() },
+        )
         else -> {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 if (playlist != null) {

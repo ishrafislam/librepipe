@@ -7,6 +7,7 @@ import androidx.concurrent.futures.await
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import app.librepipes.data.model.StreamRef
+import app.librepipes.util.toAppError
 
 /**
  * Starts playback on the shared [PlaybackService] session and opens the
@@ -16,10 +17,13 @@ object PlaybackOpener {
 
     /**
      * Resolves and starts playback for [ref] (optionally inside [queue]),
-     * then opens the full-screen player.
+     * then opens the full-screen player. Never crashes: a resolve failure is
+     * forwarded to [NowPlayingActivity] as an in-frame error state.
      */
     suspend fun playFull(context: Context, ref: StreamRef, queue: List<StreamRef> = listOf(ref)) {
-        startSession(context, ref, queue)
+        val result = runCatching { startSession(context, ref, queue) }
+        val error = result.exceptionOrNull()?.toAppError()
+        val premiereAt = result.getOrNull()?.premiereAt
         val intent = Intent(context, NowPlayingActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, ref.toJson())
@@ -27,27 +31,42 @@ object PlaybackOpener {
                 NowPlayingActivity.EXTRA_QUEUE_JSON,
                 ArrayList(queue.map { it.toJson() })
             )
+        if (error != null) {
+            intent.putExtra(NowPlayingActivity.EXTRA_STREAM_ERROR_CODE, error.code)
+                .putExtra(NowPlayingActivity.EXTRA_STREAM_ERROR_MESSAGE, error.message)
+        }
+        if (premiereAt != null) {
+            intent.putExtra(NowPlayingActivity.EXTRA_PREMIERE_AT, premiereAt)
+        }
         context.startActivity(intent)
     }
 
     /** Starts playback without opening any UI (background/audio-only mode). */
     suspend fun playBackground(context: Context, ref: StreamRef, queue: List<StreamRef> = listOf(ref)) {
-        startSession(context, ref, queue)
+        runCatching { startSession(context, ref, queue) }
     }
 
-    /** Ensures [ref] is playing on the session without switching UI. */
-    suspend fun startSession(context: Context, ref: StreamRef, queue: List<StreamRef> = listOf(ref)) {
+    /**
+     * Ensures [ref] is playing on the session without switching UI. Returns
+     * the resolved items (null on failure — callers decide how to surface it).
+     */
+    suspend fun startSession(
+        context: Context,
+        ref: StreamRef,
+        queue: List<StreamRef> = listOf(ref),
+    ): Playback.Resolved? {
         val resolved = Playback.resolve(context, ref, queue)
         val controller = connect(context)
         try {
             val current = controller.currentMediaItem?.mediaId
             if (current == ref.id && controller.playbackState == androidx.media3.common.Player.STATE_READY) {
                 controller.play()
-                return
+                return resolved
             }
             controller.setMediaItems(resolved.items, resolved.startIndex, resolved.startPosition)
             controller.prepare()
             controller.play()
+            return resolved
         } finally {
             controller.release()
         }

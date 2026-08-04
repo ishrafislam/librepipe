@@ -34,9 +34,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.EmptyState
 import app.librepipes.ui.components.kit.LpContextMenu
 import app.librepipes.ui.components.kit.LpDialog
+import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpIconAction
 import app.librepipes.ui.components.kit.LpMenuItem
 import app.librepipes.ui.components.kit.LpTopBar
@@ -71,10 +71,10 @@ fun HistoryScreen(
         )
 
         if (entries.isEmpty()) {
-            EmptyState(
+            LpEmptyState(
                 icon = Icons.Rounded.History,
                 title = "No watch history",
-                subtitle = "Videos you watch will appear here.",
+                message = "Videos you watch will appear here.",
             )
             return@Column
         }
