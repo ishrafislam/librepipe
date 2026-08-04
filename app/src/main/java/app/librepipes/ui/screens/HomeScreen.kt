@@ -1,5 +1,6 @@
 package app.librepipes.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -213,7 +214,7 @@ private fun HomeTopBar(onOpenSearch: () -> Unit) {
             .padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
+        Image(
             painter = painterResource(R.drawable.ic_brand_mark),
             contentDescription = null,
             modifier = Modifier.size(28.dp),

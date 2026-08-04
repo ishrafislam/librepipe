@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,12 +36,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.ui.theme.ShapeTokens
+import app.librepipes.ui.theme.Spacing
 
 /**
  * Design board 02-D — Navigation.
  */
 
-/** 80dp bottom bar, surfaceContainer. Selected item = 64x32 primaryContainer pill + filled icon + 6dp primary unread dot. */
+/** 68dp bottom bar, surfaceContainer. Icon over label; selected item = 64x32 primaryContainer pill around the icon only, filled icon + 6dp primary unread dot. */
 @Composable
 fun LpBottomBar(
     items: List<LpNavItem>,
@@ -58,31 +60,50 @@ fun LpBottomBar(
     ) {
         items.forEachIndexed { index, item ->
             val selected = index == selectedIndex
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .height(40.dp)
-                    .clip(ShapeTokens.full)
-                    .background(if (selected) colors.primaryContainer else Color.Transparent)
-                    .clickable(onClick = { onSelect(index) }),
-                contentAlignment = Alignment.Center,
+                    .selectable(
+                        selected = selected,
+                        role = Role.Tab,
+                        onClick = { onSelect(index) },
+                    ),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(
-                    imageVector = if (selected) item.iconFilled else item.icon,
-                    contentDescription = item.label,
-                    tint = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp),
-                )
-                if (item.unreadCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 2.dp, end = 10.dp)
-                            .size(6.dp)
-                            .clip(ShapeTokens.full)
-                            .background(colors.primary),
-                    )
+                Box(
+                    modifier = Modifier
+                        .size(width = 64.dp, height = 32.dp)
+                        .clip(ShapeTokens.full)
+                        .background(if (selected) colors.primaryContainer else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box {
+                        Icon(
+                            imageVector = if (selected) item.iconFilled else item.icon,
+                            contentDescription = null,
+                            tint = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        if (item.unreadCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 2.dp, y = (-1).dp)
+                                    .size(6.dp)
+                                    .clip(ShapeTokens.full)
+                                    .background(colors.primary),
+                            )
+                        }
+                    }
                 }
+                Spacer(Modifier.height(Spacing.space1))
+                Text(
+                    text = item.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected) colors.onSurface else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

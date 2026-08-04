@@ -416,7 +416,7 @@ private fun NavRail(currentRoute: String?, onNavigate: (String) -> Unit, unreadC
 
 private fun bottomNavItems(unreadCount: Int) = listOf(
     LpNavItem("Home", Icons.Outlined.Home, Icons.Rounded.Home),
-    LpNavItem("Subscriptions", Icons.Outlined.Subscriptions, Icons.Rounded.Subscriptions, unreadCount = unreadCount),
+    LpNavItem("Subs", Icons.Outlined.Subscriptions, Icons.Rounded.Subscriptions, unreadCount = unreadCount),
     LpNavItem("Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
     LpNavItem("Settings", Icons.Outlined.Settings, Icons.Rounded.Settings),
 )
