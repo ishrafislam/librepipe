@@ -120,7 +120,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
 class SearchViewModel(private val container: AppContainer) : ViewModel() {
 
+    /** Which of the three views the screen shows. Explicit, never inferred from the data. */
+    enum class Mode { RECENTS, SUGGESTIONS, RESULTS }
+
     var query by mutableStateOf("")
+        private set
+    var mode by mutableStateOf(Mode.RECENTS)
         private set
     var suggestions by mutableStateOf<List<String>>(emptyList())
         private set
@@ -132,11 +137,9 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         private set
     var hasMore by mutableStateOf(false)
         private set
-    var activeFilter by mutableStateOf(Extractor.SearchFilter.ALL)
-        private set
-    var searched by mutableStateOf(false)
-        private set
     var recents by mutableStateOf<List<SearchHistoryEntity>>(emptyList())
+        private set
+    var subscribedUrls by mutableStateOf<Set<String>>(emptySet())
         private set
 
     private var feed: Extractor.SearchFeed? = null
@@ -145,6 +148,21 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             container.searchHistory.observeRecent(12).collect { recents = it }
+        }
+        viewModelScope.launch {
+            container.subscriptions.observeAll().collect { subs ->
+                subscribedUrls = subs.map { it.channelUrl }.toSet()
+            }
+        }
+    }
+
+    fun toggleSubscribe(channel: ChannelRef) {
+        viewModelScope.launch {
+            if (channel.url in subscribedUrls) {
+                container.subscriptions.unsubscribe(channel.url)
+            } else {
+                container.subscriptions.subscribe(channel)
+            }
         }
     }
 
@@ -156,36 +174,43 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.searchHistory.clear() }
     }
 
+    /** Typing only ever moves between RECENTS and SUGGESTIONS — never into results. */
     fun onQueryChange(newQuery: String) {
         query = newQuery
-        searched = false
         suggestionJob?.cancel()
         if (newQuery.isBlank()) {
+            mode = Mode.RECENTS
             suggestions = emptyList()
             return
         }
+        mode = Mode.SUGGESTIONS
         suggestionJob = viewModelScope.launch {
             delay(250)
             suggestions = runCatching { Extractor.suggestions(newQuery) }.getOrDefault(emptyList())
         }
     }
 
-    fun search(filter: Extractor.SearchFilter = activeFilter) {
-        val q = query.trim()
+    /** Tapping a suggestion or a recent: search it directly, with no debounce job spawned. */
+    fun onSuggestionClick(suggestion: String) = search(suggestion)
+
+    fun search(newQuery: String = query) {
+        val q = newQuery.trim()
         if (q.isBlank()) return
-        activeFilter = filter
+        // Cancel first, or an in-flight suggestions fetch lands after the results.
+        suggestionJob?.cancel()
+        query = q
         suggestions = emptyList()
+        mode = Mode.RESULTS
         viewModelScope.launch {
             container.searchHistory.add(q)
             loading = true
             error = null
             try {
-                val f = Extractor.search(q, filter)
+                val f = Extractor.search(q, Extractor.SearchFilter.ALL)
                 f.loadInitial()
                 feed = f
                 items = f.items.toList()
                 hasMore = f.hasMore
-                searched = true
             } catch (e: Exception) {
                 error = e.toAppError()
             } finally {

@@ -43,7 +43,6 @@ object Extractor {
         VIDEOS("videos", "EgIQAQ%3D%3D"),
         CHANNELS("channels", "EgIQAg%3D%3D"),
         PLAYLISTS("playlists", "EgIQAw%3D%3D"),
-        MUSIC("music_songs", null),
     }
 
     sealed interface SearchItem {
@@ -81,12 +80,7 @@ object Extractor {
 
         suspend fun loadMore(): Boolean = withContext(Dispatchers.IO) {
             val token = nextToken ?: return@withContext false
-            val page = if (filter == SearchFilter.MUSIC) {
-                client.musicSearch(query, token)
-            } else {
-                client.search(query, filter.params, token)
-            }
-            consume(page)
+            consume(client.search(query, filter.params, token))
             true
         }
 
@@ -102,11 +96,7 @@ object Extractor {
     }
 
     suspend fun search(query: String, filter: SearchFilter): SearchFeed = onIo { c ->
-        val page = if (filter == SearchFilter.MUSIC) {
-            c.musicSearch(query)
-        } else {
-            c.search(query, filter.params, null)
-        }
+        val page = c.search(query, filter.params, null)
         val parsed = parseSearchPage(page)
         SearchFeed(c, query, filter, parsed.items, parsed.nextToken)
     }

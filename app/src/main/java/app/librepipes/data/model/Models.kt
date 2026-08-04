@@ -68,6 +68,8 @@ data class ChannelRef(
     val url: String,
     val avatarUrl: String? = null,
     val bannerUrl: String? = null,
+    /** "@handle", when the source provides one. Display only. */
+    val handle: String? = null,
     val subscriberCount: Long = 0L,
     val description: String? = null,
 )

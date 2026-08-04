@@ -231,7 +231,11 @@ private fun MainScreen(
     }
 
     val tabRoutes = listOf(Routes.HOME, Routes.SUBSCRIPTIONS, Routes.LIBRARY, Routes.SETTINGS)
-    val selectedIndex = tabRoutes.indexOf(currentRoute)
+    // Search is pushed from Home, so Home stays the active tab while searching.
+    val selectedIndex = when (currentRoute) {
+        Routes.SEARCH -> 0
+        else -> tabRoutes.indexOf(currentRoute)
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp

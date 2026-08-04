@@ -119,7 +119,9 @@ object Parsers {
                 best = url
             }
         }
-        return best
+        // Channel avatars come back protocol-relative ("//yt3.ggpht.com/…"), which no
+        // image loader can resolve. Video thumbnails already carry a scheme.
+        return best?.let { if (it.startsWith("//")) "https:$it" else it }
     }
 
     /** "3:34" or "1:02:34" -> seconds. */
@@ -245,7 +247,12 @@ object Parsers {
             name = runsText(o.optJSONObject("title")) ?: channelId,
             url = channelUrl(channelId),
             avatarUrl = sourcesBest(o.optJSONObject("thumbnail")),
-            subscriberCount = parseCompactCount(runsText(o.optJSONObject("subscriberCountText"))),
+            // YouTube swapped these two: videoCountText holds "21.1M subscribers" and
+            // subscriberCountText holds "@handle". The guards keep us correct either way.
+            subscriberCount = parseCompactCount(runsText(o.optJSONObject("videoCountText")))
+                .takeIf { it > 0 }
+                ?: parseCompactCount(runsText(o.optJSONObject("subscriberCountText"))),
+            handle = runsText(o.optJSONObject("subscriberCountText"))?.takeIf { it.startsWith("@") },
             description = runsText(o.optJSONObject("descriptionSnippet")),
         )
     }

@@ -182,6 +182,8 @@ fun LpVideoRow(
     modifier: Modifier = Modifier,
     onLongPress: (() -> Unit)? = null,
     progress: Float? = null,
+    /** Trailing overflow glyph. Decorative today — it carries no click handler. */
+    showMenu: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -234,14 +236,16 @@ fun LpVideoRow(
                 LpLinearProgress(progress = progress)
             }
         }
-        Icon(
-            Icons.Rounded.MoreVert,
-            contentDescription = null,
-            tint = colors.onSurfaceVariant,
-            modifier = Modifier
-                .size(48.dp)
-                .padding(14.dp),
-        )
+        if (showMenu) {
+            Icon(
+                Icons.Rounded.MoreVert,
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier
+                    .size(48.dp)
+                    .padding(14.dp),
+            )
+        }
     }
 }
 
@@ -254,6 +258,8 @@ fun LpChannelRow(
     subtitle: String? = null,
     trailingLabel: String? = null,
     onTrailingClick: (() -> Unit)? = null,
+    /** Render the trailing action as a filled call-to-action instead of an outlined pill. */
+    trailingFilled: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -289,11 +295,20 @@ fun LpChannelRow(
             }
         }
         if (trailingLabel != null) {
-            LpPillButton(
-                text = trailingLabel,
-                onClick = onTrailingClick ?: {},
-                modifier = Modifier.padding(start = 12.dp),
-            )
+            val trailingModifier = Modifier.padding(start = 12.dp)
+            if (trailingFilled) {
+                LpFilledButton(
+                    text = trailingLabel,
+                    onClick = onTrailingClick ?: {},
+                    modifier = trailingModifier,
+                )
+            } else {
+                LpPillButton(
+                    text = trailingLabel,
+                    onClick = onTrailingClick ?: {},
+                    modifier = trailingModifier,
+                )
+            }
         }
     }
 }
