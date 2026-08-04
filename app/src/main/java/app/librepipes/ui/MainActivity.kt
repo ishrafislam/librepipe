@@ -313,7 +313,7 @@ private fun AppNavHost(
         modifier = modifier,
     ) {
         composable(Routes.HOME) {
-            HomeScreen(appViewModel { HomeViewModel(it) }, openVideo, openChannel, openSearch)
+            HomeScreen(appViewModel { HomeViewModel(it) }, openVideo, openSearch)
         }
         composable(Routes.SEARCH) {
             SearchScreen(

@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.Locale
 
 /**
  * Minimal InnerTube client that talks to YouTube's private JSON API directly.
@@ -24,6 +25,14 @@ import java.net.URLEncoder
  * No login, no cookies, no tracking params.
  */
 class InnertubeClient(private val okHttpClient: OkHttpClient) {
+
+    /** Country code sent as `gl`; drives which popular videos the home feed returns. */
+    private val region: String =
+        Locale.getDefault().country.takeIf { it.length == 2 }?.uppercase(Locale.ROOT) ?: "US"
+
+    /** Language sent as `hl`. */
+    private val language: String =
+        Locale.getDefault().language.takeIf { it.isNotBlank() } ?: "en"
 
     companion object {
         private const val YT = "https://www.youtube.com"
@@ -158,23 +167,23 @@ class InnertubeClient(private val okHttpClient: OkHttpClient) {
         .put("context", JSONObject().put("client", JSONObject()
             .put("clientName", "WEB")
             .put("clientVersion", webClientVersion())
-            .put("hl", "en")
-            .put("gl", "US")))
+            .put("hl", language)
+            .put("gl", region)))
 
     private fun androidBody() = JSONObject()
         .put("context", JSONObject().put("client", JSONObject()
             .put("clientName", "ANDROID")
             .put("clientVersion", ANDROID_VERSION)
             .put("androidSdkVersion", 34)
-            .put("hl", "en")
-            .put("gl", "US")))
+            .put("hl", language)
+            .put("gl", region)))
 
     private fun remixBody() = JSONObject()
         .put("context", JSONObject().put("client", JSONObject()
             .put("clientName", "WEB_REMIX")
             .put("clientVersion", REMIX_VERSION)
-            .put("hl", "en")
-            .put("gl", "US")))
+            .put("hl", language)
+            .put("gl", region)))
 
     private fun post(
         url: String,

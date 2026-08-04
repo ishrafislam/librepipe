@@ -226,6 +226,11 @@ object Parsers {
             thumbnailUrl = sourcesBest(o.optJSONObject("thumbnail")),
             uploaderName = ownerRun?.optString("text"),
             uploaderUrl = uploaderUrlFrom(ownerRun?.optJSONObject("navigationEndpoint")),
+            uploaderAvatarUrl = sourcesBest(
+                o.optJSONObject("channelThumbnailSupportedRenderers")
+                    ?.optJSONObject("channelThumbnailWithLinkRenderer")
+                    ?.optJSONObject("thumbnail"),
+            ),
             duration = if (isLive) 0L else parseDuration(runsText(o.optJSONObject("lengthText"))),
             viewCount = parseViewCount(runsText(o.optJSONObject("viewCountText"))),
             textualDate = runsText(o.optJSONObject("publishedTimeText")),
@@ -267,6 +272,7 @@ object Parsers {
         val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
         val rows = metadataRows(meta)
         val (uploader, uploaderUrl) = ownerFromRows(rows)
+        val isLive = isLiveLockup(o)
         return StreamRef(
             id = videoId,
             title = runsText(meta.optJSONObject("title")) ?: videoId,
@@ -276,11 +282,15 @@ object Parsers {
             ),
             uploaderName = uploader,
             uploaderUrl = uploaderUrl,
-            duration = parseDuration(durationBadge(o)),
+            // Absent on channel-tab lockups (all one channel); present on some search lockups.
+            uploaderAvatarUrl = findAll(o, "avatarViewModel")
+                .firstNotNullOfOrNull { sourcesBest(it.optJSONObject("image")) },
+            duration = if (isLive) 0L else parseDuration(durationBadge(o)),
             viewCount = rows.firstNotNullOfOrNull {
                 parseCompactCount(it).takeIf { n -> n > 0 && "view" in it }
             } ?: 0L,
             textualDate = rows.firstOrNull { isDateText(it) },
+            isLive = isLive,
         )
     }
 
@@ -748,6 +758,20 @@ object Parsers {
             }
         }
         return null
+    }
+
+    /**
+     * Live detection for [parseLockupVideo]. The LIVE badge sits under a different
+     * overlay wrapper than the duration badge, so scan every badge view model under
+     * the thumbnail rather than a single fixed path.
+     */
+    private fun isLiveLockup(o: JSONObject): Boolean {
+        val image = o.optJSONObject("contentImage") ?: return false
+        for (badge in findAll(image, "thumbnailBadgeViewModel")) {
+            if (badge.optString("text").equals("LIVE", ignoreCase = true)) return true
+            if (badge.optString("badgeStyle").contains("LIVE", ignoreCase = true)) return true
+        }
+        return false
     }
 
     private fun isDateText(text: String): Boolean =

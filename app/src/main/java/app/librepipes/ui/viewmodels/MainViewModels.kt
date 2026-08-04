@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import app.librepipes.data.db.SearchHistoryEntity
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.ChannelRef
+import app.librepipes.data.model.DownloadState
 import app.librepipes.data.model.PlaylistRef
 import app.librepipes.data.model.StreamRef
 import app.librepipes.di.AppContainer
@@ -26,15 +27,13 @@ import kotlinx.coroutines.launch
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
-    data class HomeSection(val channel: ChannelRef, val videos: List<StreamRef>)
-
     data class UiState(
         val loading: Boolean = true,
         val error: AppError? = null,
-        val sections: List<HomeSection> = emptyList(),
-        val trending: List<StreamRef> = emptyList(),
+        /** Subscription uploads merged with region-popular videos, deduped. */
+        val feed: List<StreamRef> = emptyList(),
         val hasSubscriptions: Boolean = false,
-        val inProgress: List<StreamRef> = emptyList(),
+        val inProgressIds: Set<String> = emptySet(),
         val downloadedIds: Set<String> = emptySet(),
         val progressById: Map<String, Float> = emptyMap(),
     )
@@ -45,22 +44,23 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             container.history.observeRecent(100).collect { history ->
-                val inProgress = history.mapNotNull { entry ->
-                    StreamRef.fromJson(entry.streamJson)?.takeIf {
-                        entry.durationMs > 0 && entry.positionMs > 0 &&
-                            entry.durationMs - entry.positionMs > 15_000
-                    }
+                val unfinished = history.filter { entry ->
+                    entry.durationMs > 0 && entry.positionMs > 0 &&
+                        entry.durationMs - entry.positionMs > 15_000
                 }
-                val progressById = inProgress.associate { ref ->
-                    val entry = history.firstOrNull { it.streamId == ref.id }
-                    ref.id to ((entry?.positionMs ?: 0L).toFloat() / (entry?.durationMs ?: 1L).coerceAtLeast(1L))
+                val inProgressIds = unfinished.map { it.streamId }.toSet()
+                val progressById = unfinished.associate { entry ->
+                    entry.streamId to (entry.positionMs.toFloat() / entry.durationMs.coerceAtLeast(1L))
                 }
-                _uiState.update { it.copy(inProgress = inProgress, progressById = progressById) }
+                _uiState.update { it.copy(inProgressIds = inProgressIds, progressById = progressById) }
             }
         }
         viewModelScope.launch {
             container.downloads.observeAll().collect { downloads ->
-                val ids = downloads.mapNotNull { StreamRef.fromJson(it.streamJson)?.id }.toSet()
+                val ids = downloads
+                    .filter { it.state == DownloadState.DONE.name }
+                    .mapNotNull { StreamRef.fromJson(it.streamJson)?.id }
+                    .toSet()
                 _uiState.update { it.copy(downloadedIds = ids) }
             }
         }
@@ -72,31 +72,47 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             _uiState.update { it.copy(loading = true, error = null) }
             try {
                 val subs = container.subscriptions.getAll()
-                if (subs.isEmpty()) {
-                    val trending = runCatching { Extractor.trending() }.getOrDefault(emptyList())
-                    _uiState.update {
-                        it.copy(loading = false, hasSubscriptions = false, sections = emptyList(), trending = trending)
+                val feed = coroutineScope {
+                    val popular = async {
+                        runCatching { Extractor.trending() }.getOrDefault(emptyList())
                     }
-                } else {
-                    val sections = coroutineScope {
-                        subs.take(12).map { sub ->
-                            async {
-                                runCatching {
-                                    val feed = Extractor.channel(sub.channelUrl)
-                                    feed.loadInitial()
-                                    HomeSection(feed.channel, feed.videos.take(6))
-                                }.getOrNull()
-                            }
-                        }.awaitAll().filterNotNull()
-                    }
-                    _uiState.update {
-                        it.copy(loading = false, hasSubscriptions = true, sections = sections, trending = emptyList())
-                    }
+                    val channels = subs.take(12).map { sub ->
+                        async {
+                            runCatching {
+                                val channel = Extractor.channel(sub.channelUrl)
+                                channel.loadInitial()
+                                // Channel-tab items carry no avatar of their own, so take it
+                                // from the header (falling back to the stored subscription).
+                                val avatar = channel.channel.avatarUrl ?: sub.avatarUrl
+                                channel.videos.take(6).map {
+                                    it.copy(uploaderAvatarUrl = it.uploaderAvatarUrl ?: avatar)
+                                }
+                            }.getOrNull()
+                        }
+                    }.awaitAll().filterNotNull()
+                    (interleave(channels) + popular.await()).distinctBy { it.id }
+                }
+                _uiState.update {
+                    it.copy(loading = false, hasSubscriptions = subs.isNotEmpty(), feed = feed)
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(loading = false, error = e.toAppError()) }
             }
         }
+    }
+
+    /**
+     * Round-robin flatten: one video per channel, then the next from each. A plain
+     * flatten would stack the first channel's whole upload run at the top of the feed.
+     */
+    private fun interleave(lists: List<List<StreamRef>>): List<StreamRef> {
+        if (lists.isEmpty()) return emptyList()
+        val out = ArrayList<StreamRef>(lists.sumOf { it.size })
+        val longest = lists.maxOf { it.size }
+        for (i in 0 until longest) {
+            for (list in lists) list.getOrNull(i)?.let { out += it }
+        }
+        return out
     }
 }
 

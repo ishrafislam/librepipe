@@ -65,7 +65,8 @@ fun LpVideoCard(
     ref: StreamRef,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    width: Dp = 200.dp,
+    /** Fixed card width; pass null to let the caller's [modifier] size the card. */
+    width: Dp? = 200.dp,
     onLongPress: (() -> Unit)? = null,
     showChannel: Boolean = true,
     showAvatar: Boolean = true,
@@ -74,7 +75,7 @@ fun LpVideoCard(
     val colors = MaterialTheme.colorScheme
     Column(
         modifier = modifier
-            .width(width)
+            .then(if (width != null) Modifier.width(width) else Modifier)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
         Box {
@@ -120,12 +121,20 @@ fun LpVideoCard(
         }
         Row(modifier = Modifier.padding(top = 12.dp)) {
             if (showAvatar) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(colors.surfaceContainerHigh),
-                )
+                val avatarModifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(colors.surfaceContainerHigh)
+                if (ref.uploaderAvatarUrl != null) {
+                    AsyncImage(
+                        model = ref.uploaderAvatarUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = avatarModifier,
+                    )
+                } else {
+                    Box(modifier = avatarModifier)
+                }
                 Spacer(Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {

@@ -14,6 +14,7 @@ data class StreamRef(
     val thumbnailUrl: String? = null,
     val uploaderName: String? = null,
     val uploaderUrl: String? = null,
+    val uploaderAvatarUrl: String? = null,
     val duration: Long = 0L,
     val viewCount: Long = 0L,
     val textualDate: String? = null,
@@ -27,6 +28,7 @@ data class StreamRef(
         put("thumbnailUrl", thumbnailUrl ?: "")
         put("uploaderName", uploaderName ?: "")
         put("uploaderUrl", uploaderUrl ?: "")
+        put("uploaderAvatarUrl", uploaderAvatarUrl ?: "")
         put("duration", duration)
         put("viewCount", viewCount)
         put("textualDate", textualDate ?: "")
@@ -46,6 +48,7 @@ data class StreamRef(
                     thumbnailUrl = o.optString("thumbnailUrl").ifEmpty { null },
                     uploaderName = o.optString("uploaderName").ifEmpty { null },
                     uploaderUrl = o.optString("uploaderUrl").ifEmpty { null },
+                    uploaderAvatarUrl = o.optString("uploaderAvatarUrl").ifEmpty { null },
                     duration = o.optLong("duration"),
                     viewCount = o.optLong("viewCount"),
                     textualDate = o.optString("textualDate").ifEmpty { null },

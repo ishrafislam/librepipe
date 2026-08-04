@@ -228,7 +228,7 @@ fun LpListSkeleton(rows: Int = 5, modifier: Modifier = Modifier) {
     }
 }
 
-/** Feed-shaped loading skeleton: chips + two sections of 16:9 cards. */
+/** Feed-shaped loading skeleton: chips + full-width 16:9 cards, matching [LpVideoCard]. */
 @Composable
 fun LpFeedSkeleton(modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -240,38 +240,26 @@ fun LpFeedSkeleton(modifier: Modifier = Modifier) {
             LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.size(width = 96.dp, height = 32.dp))
             LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.size(width = 64.dp, height = 32.dp))
         }
-        LpSkeletonBox(
-            shape = ShapeTokens.xs,
-            modifier = Modifier.padding(start = 16.dp).size(width = 120.dp, height = 20.dp),
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(12.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            items(3) {
+        repeat(3) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
                 LpSkeletonBox(
                     modifier = Modifier
-                        .width(200.dp)
+                        .fillMaxWidth()
                         .aspectRatio(16f / 9f),
                 )
-            }
-        }
-        LpSkeletonBox(
-            shape = ShapeTokens.xs,
-            modifier = Modifier.padding(start = 16.dp).size(width = 120.dp, height = 20.dp),
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(12.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            items(3) {
-                LpSkeletonBox(
-                    modifier = Modifier
-                        .width(200.dp)
-                        .aspectRatio(16f / 9f),
-                )
+                Row(modifier = Modifier.padding(top = 12.dp)) {
+                    LpSkeletonBox(shape = ShapeTokens.full, modifier = Modifier.size(36.dp))
+                    Column(modifier = Modifier.padding(start = 12.dp)) {
+                        LpSkeletonBox(
+                            shape = ShapeTokens.xs,
+                            modifier = Modifier.size(width = 220.dp, height = 16.dp),
+                        )
+                        LpSkeletonBox(
+                            shape = ShapeTokens.xs,
+                            modifier = Modifier.padding(top = 8.dp).size(width = 140.dp, height = 14.dp),
+                        )
+                    }
+                }
             }
         }
     }
