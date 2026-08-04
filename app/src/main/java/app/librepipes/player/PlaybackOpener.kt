@@ -7,7 +7,31 @@ import androidx.concurrent.futures.await
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import app.librepipes.data.model.StreamRef
-import app.librepipes.util.toAppError
+
+/** Intent extra carrying the video URL the watch route should open. */
+const val EXTRA_WATCH_URL = "app.librepipes.WATCH_URL"
+
+/**
+ * Hands a `StreamRef` plus its queue to the watch route. A queue is a list, so it can't
+ * ride in a nav argument; this bridges the gap for the one hop between navigate and the
+ * ViewModel being constructed.
+ */
+object WatchRequest {
+    @Volatile
+    private var pending: Pair<StreamRef, List<StreamRef>>? = null
+
+    fun set(ref: StreamRef, queue: List<StreamRef>) {
+        pending = ref to queue
+    }
+
+    /** Returns the pending request when it matches [url], clearing it. */
+    fun take(url: String): Pair<StreamRef, List<StreamRef>>? {
+        val current = pending ?: return null
+        if (current.first.url != url) return null
+        pending = null
+        return current
+    }
+}
 
 /**
  * Starts playback on the shared [PlaybackService] session and opens the
@@ -16,29 +40,18 @@ import app.librepipes.util.toAppError
 object PlaybackOpener {
 
     /**
-     * Resolves and starts playback for [ref] (optionally inside [queue]),
-     * then opens the full-screen player. Never crashes: a resolve failure is
-     * forwarded to [NowPlayingActivity] as an in-frame error state.
+     * Opens the watch route for [ref] from outside the Compose tree (notifications,
+     * the popup player, deep links). The route's ViewModel starts the session itself,
+     * so this only routes.
      */
-    suspend fun playFull(context: Context, ref: StreamRef, queue: List<StreamRef> = listOf(ref)) {
-        val result = runCatching { startSession(context, ref, queue) }
-        val error = result.exceptionOrNull()?.toAppError()
-        val premiereAt = result.getOrNull()?.premiereAt
-        val intent = Intent(context, NowPlayingActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, ref.toJson())
-            .putStringArrayListExtra(
-                NowPlayingActivity.EXTRA_QUEUE_JSON,
-                ArrayList(queue.map { it.toJson() })
-            )
-        if (error != null) {
-            intent.putExtra(NowPlayingActivity.EXTRA_STREAM_ERROR_CODE, error.code)
-                .putExtra(NowPlayingActivity.EXTRA_STREAM_ERROR_MESSAGE, error.message)
-        }
-        if (premiereAt != null) {
-            intent.putExtra(NowPlayingActivity.EXTRA_PREMIERE_AT, premiereAt)
-        }
-        context.startActivity(intent)
+    fun openWatch(context: Context, ref: StreamRef, queue: List<StreamRef> = emptyList()) {
+        WatchRequest.set(ref, queue)
+        context.startActivity(
+            Intent()
+                .setClassName(context, "app.librepipes.ui.MainActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(EXTRA_WATCH_URL, ref.url)
+        )
     }
 
     /** Starts playback without opening any UI (background/audio-only mode). */

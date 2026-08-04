@@ -5,9 +5,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,10 +63,12 @@ fun LpSeekBar(
     modifier: Modifier = Modifier,
     chapters: List<Float> = emptyList(),
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val dragging by interaction.collectIsDraggedAsState()
+    // While the finger is down the bar follows the touch, not the player — otherwise
+    // position updates arriving mid-drag would yank the thumb back.
+    var dragging by remember { mutableStateOf(false) }
+    var scrub by remember { mutableFloatStateOf(0f) }
+    val shown = if (dragging) scrub else progress.coerceIn(0f, 1f)
     val thumbSize by animateDpAsState(if (dragging) 6.dp else 12.dp, label = "seek-thumb")
-    val colors = MaterialTheme.colorScheme
     val played = LpSeekPlayed
     val track = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) Color(0xFFD8DCE0) else Color(0xFF3E4347)
     val density = LocalDensity.current
@@ -81,19 +83,34 @@ fun LpSeekBar(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(4.dp)
+                .height(24.dp)
                 .align(Alignment.CenterStart)
-                .pointerInput(chapters, progress) {
+                .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        val fraction = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeek(fraction)
+                        onSeek((offset.x / size.width).coerceIn(0f, 1f))
                     }
+                }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            dragging = true
+                            scrub = (offset.x / size.width).coerceIn(0f, 1f)
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            scrub = (change.position.x / size.width).coerceIn(0f, 1f)
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            onSeek(scrub)
+                        },
+                        onDragCancel = { dragging = false },
+                    )
                 },
         ) {
             val trackY = size.height / 2f
             val stroke = with(density) { 4.dp.toPx() }
             drawLine(track, Offset(0f, trackY), Offset(size.width, trackY), strokeWidth = stroke)
-            val playedWidth = size.width * progress.coerceIn(0f, 1f)
+            val playedWidth = size.width * shown
             drawLine(played, Offset(0f, trackY), Offset(playedWidth, trackY), strokeWidth = stroke)
             chapters.forEach { chapter ->
                 val x = size.width * chapter.coerceIn(0f, 1f)

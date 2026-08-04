@@ -40,6 +40,24 @@ data class Chapter(
 )
 
 /**
+ * Watch-page metadata that the player response does not carry: the channel's avatar and
+ * subscriber line, and the absolute upload date. Fetched separately from `next` so
+ * playback never waits on it.
+ */
+data class WatchNext(
+    val uploaderName: String? = null,
+    val uploaderUrl: String? = null,
+    val uploaderId: String? = null,
+    val uploaderAvatarUrl: String? = null,
+    /** Already formatted by YouTube, e.g. "4.53M subscribers". */
+    val subscriberText: String? = null,
+    /** Absolute date, e.g. "Oct 24, 2009". */
+    val dateText: String? = null,
+    /** Relative date, e.g. "16 years ago". */
+    val relativeDateText: String? = null,
+)
+
+/**
  * Everything needed to play or download a video, resolved from the
  * InnerTube player response (replaces NewPipe's StreamInfo).
  */
@@ -53,6 +71,8 @@ data class StreamInfo(
     val duration: Long = 0L,
     val viewCount: Long = 0L,
     val textualDate: String? = null,
+    /** `videoDetails.shortDescription` from the player response. */
+    val description: String? = null,
     val streamType: StreamType = StreamType.NORMAL,
     /** Epoch millis when a premiere/live stream goes live; null otherwise. */
     val premiereAt: Long? = null,

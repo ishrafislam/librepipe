@@ -7,6 +7,7 @@ import app.librepipes.data.youtube.InnertubeClient
 import app.librepipes.data.youtube.Parsers
 import app.librepipes.data.youtube.StreamInfo
 import app.librepipes.data.youtube.Chapter
+import app.librepipes.data.youtube.WatchNext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -142,6 +143,14 @@ object Extractor {
     /** Chapter markers (start times) for a video; empty when unavailable. */
     suspend fun chapters(url: String): List<Chapter> = onIo { c ->
         c.chapters(idFromUrl(url))
+    }
+
+    /**
+     * Watch-page metadata (channel avatar, subscriber line, upload date). Kept apart
+     * from [stream] on purpose — playback must not wait on a metadata request.
+     */
+    suspend fun watchNext(url: String): WatchNext = onIo { c ->
+        Parsers.parseWatchNext(c.next(idFromUrl(url)))
     }
 
     // ------------------------------------------------------------------ Channels

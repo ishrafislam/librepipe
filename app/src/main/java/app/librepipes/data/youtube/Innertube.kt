@@ -105,6 +105,16 @@ class InnertubeClient(private val okHttpClient: OkHttpClient) {
         return post("$API/player", body, ANDROID_UA, YT)
     }
 
+    /**
+     * Watch-page metadata (WEB client): channel avatar, subscriber count, upload date.
+     * None of this is in the player response, and the ANDROID body returns a different
+     * shape here, so this deliberately uses [webBody].
+     */
+    fun next(videoId: String): JSONObject {
+        val body = webBody().put("videoId", videoId)
+        return post("$API/next", body, WEB_UA, YT)
+    }
+
     // ---------------------------------------------------------------- chapters
 
     /** Chapter markers (start times) from the watch page; empty when unavailable. */

@@ -156,11 +156,9 @@ class PopupPlayerService : android.app.Service() {
     private fun expandToFull() {
         val current = controller?.currentMediaItem
         if (current != null) {
-            val refJson = current.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
-            val intent = Intent(this, NowPlayingActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (refJson != null) intent.putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, refJson)
-            startActivity(intent)
+            val ref = current.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
+                ?.let { StreamRef.fromJson(it) }
+            if (ref != null) PlaybackOpener.openWatch(this, ref)
         }
         stopPopup(pause = false)
     }

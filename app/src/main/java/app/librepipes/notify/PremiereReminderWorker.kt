@@ -10,7 +10,7 @@ import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import app.librepipes.data.model.StreamRef
-import app.librepipes.player.NowPlayingActivity
+import app.librepipes.player.EXTRA_WATCH_URL
 
 /**
  * Fires the one-time "Remind me" notification for a premiere at its scheduled
@@ -39,8 +39,9 @@ class PremiereReminderWorker(
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasPermission) return Result.success()
 
-        val intent = Intent(applicationContext, NowPlayingActivity::class.java)
-            .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, ref.toJson())
+        val intent = Intent()
+            .setClassName(applicationContext, "app.librepipes.ui.MainActivity")
+            .putExtra(EXTRA_WATCH_URL, ref.url)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val pendingIntent = PendingIntent.getActivity(
             applicationContext,

@@ -631,6 +631,7 @@ object Parsers {
             uploaderUrl = details.optString("channelId").takeIf { it.isNotBlank() }?.let { channelUrl(it) },
             duration = details.optString("lengthSeconds").toLongOrNull() ?: 0L,
             viewCount = details.optString("viewCount").toLongOrNull() ?: 0L,
+            description = details.optString("shortDescription").ifBlank { null },
             streamType = streamType,
             premiereAt = premiereAt,
             videoStreams = progressive,
@@ -639,6 +640,27 @@ object Parsers {
             dashMpdUrl = streaming?.optString("dashManifestUrl").orEmpty().ifBlank { null },
             hlsUrl = streaming?.optString("hlsManifestUrl").orEmpty().ifBlank { null },
             subtitles = subtitles,
+        )
+    }
+
+    /** Channel avatar, subscriber line and upload date from a `next` response. */
+    fun parseWatchNext(root: JSONObject): WatchNext {
+        val owner = findAll(root, "videoOwnerRenderer").firstOrNull()
+        val primary = findAll(root, "videoPrimaryInfoRenderer").firstOrNull()
+        val ownerRun = owner?.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)
+        val channelId = owner?.optJSONObject("navigationEndpoint")
+            ?.optJSONObject("browseEndpoint")
+            ?.optString("browseId")
+            ?.takeIf { it.isNotBlank() }
+        return WatchNext(
+            uploaderName = ownerRun?.optString("text")?.takeIf { it.isNotBlank() },
+            uploaderUrl = channelId?.let { channelUrl(it) }
+                ?: uploaderUrlFrom(ownerRun?.optJSONObject("navigationEndpoint")),
+            uploaderId = channelId,
+            uploaderAvatarUrl = sourcesBest(owner?.optJSONObject("thumbnail")),
+            subscriberText = runsText(owner?.optJSONObject("subscriberCountText")),
+            dateText = runsText(primary?.optJSONObject("dateText")),
+            relativeDateText = runsText(primary?.optJSONObject("relativeDateText")),
         )
     }
 
