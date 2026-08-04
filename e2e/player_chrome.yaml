@@ -11,6 +11,7 @@ name: Phase 4 player chrome, mini player, queue sheet
       - tapOn: "Clear"
 - inputText: "kotlin in 100 seconds"
 - pressKey: Enter
+- hideKeyboard
 - tapOn: "Videos"
 - extendedWaitUntil:
     visible: ".*views.*"

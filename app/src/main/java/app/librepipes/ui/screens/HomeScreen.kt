@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Subscriptions
@@ -36,18 +37,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.R
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.EmptyState
-import app.librepipes.ui.components.ErrorState
+import app.librepipes.ui.components.kit.LpEmptyState
+import app.librepipes.ui.components.kit.LpErrorState
+import app.librepipes.ui.components.kit.LpFeedSkeleton
 import app.librepipes.ui.components.kit.LpFilterChip
-import app.librepipes.ui.components.kit.LpSkeletonBox
 import app.librepipes.ui.components.kit.LpVideoCard
+import app.librepipes.ui.components.kit.rememberDelayedSkeleton
 import app.librepipes.ui.theme.ShapeTokens
 import app.librepipes.ui.viewmodels.HomeViewModel
+import app.librepipes.util.Connectivity
 
 private enum class HomeFilter(val label: String) {
     ALL("All"),
@@ -67,6 +71,8 @@ fun HomeScreen(
     val state = vm.uiState.collectAsState().value
     var filter by remember { mutableStateOf(HomeFilter.ALL) }
     val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val online by Connectivity.observeOnline(context).collectAsState(initial = Connectivity.isOnline(context))
 
     PullToRefreshBox(
         isRefreshing = state.loading,
@@ -77,20 +83,37 @@ fun HomeScreen(
             HomeTopBar(onOpenSearch = onOpenSearch)
 
             val showError = state.error != null && state.sections.isEmpty() && state.trending.isEmpty()
+            val skeleton = rememberDelayedSkeleton(
+                state.loading && state.sections.isEmpty() && state.trending.isEmpty(),
+            )
             when {
-                showError -> ErrorState(state.error.orEmpty(), onRetry = { vm.refresh() })
+                showError -> if (!online) {
+                    LpErrorState(
+                        title = "You're offline",
+                        message = state.error?.message.orEmpty(),
+                        icon = Icons.Rounded.CloudOff,
+                        code = "OFFLINE",
+                        onRetry = { vm.refresh() },
+                    )
+                } else {
+                    LpErrorState(
+                        message = state.error?.message.orEmpty(),
+                        code = state.error?.code,
+                        onRetry = { vm.refresh() },
+                    )
+                }
 
                 state.loading && state.sections.isEmpty() && state.trending.isEmpty() ->
-                    HomeSkeleton()
+                    if (skeleton) LpFeedSkeleton() else Box(Modifier.fillMaxSize())
 
                 !state.hasSubscriptions -> {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         if (state.trending.isEmpty()) {
                             item {
-                                EmptyState(
+                                LpEmptyState(
                                     icon = Icons.Rounded.Subscriptions,
                                     title = "Nothing here yet",
-                                    subtitle = "Subscribe to channels to see their latest uploads here.\nIn the meantime, enjoy what's trending.",
+                                    message = "Subscribe to channels to see their latest uploads here.\nIn the meantime, enjoy what's trending.",
                                 )
                             }
                         } else {
@@ -128,10 +151,10 @@ fun HomeScreen(
                         }
                         if (visibleSections.isEmpty() && !state.loading) {
                             item {
-                                EmptyState(
+                                LpEmptyState(
                                     icon = Icons.Rounded.Search,
                                     title = "No uploads here",
-                                    subtitle = when (filter) {
+                                    message = when (filter) {
                                         HomeFilter.CONTINUE -> "Videos you're in the middle of will show up here."
                                         HomeFilter.LIVE -> "Live streams from your subscriptions will show up here."
                                         HomeFilter.DOWNLOADED -> "Downloaded videos will show up here."
@@ -296,47 +319,5 @@ private fun TrendingHeader() {
 private fun TrendingCard(ref: StreamRef, onClick: () -> Unit) {
     Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
         LpVideoCard(ref = ref, onClick = onClick, width = 320.dp)
-    }
-}
-
-@Composable
-private fun HomeSkeleton() {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.size(width = 76.dp, height = 32.dp))
-            LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.size(width = 96.dp, height = 32.dp))
-            LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.size(width = 64.dp, height = 32.dp))
-        }
-        LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.padding(start = 16.dp).size(width = 120.dp, height = 20.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(12.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            items(3) {
-                LpSkeletonBox(
-                    modifier = Modifier
-                        .width(200.dp)
-                        .aspectRatio(16f / 9f),
-                )
-            }
-        }
-        LpSkeletonBox(shape = ShapeTokens.xs, modifier = Modifier.padding(start = 16.dp).size(width = 120.dp, height = 20.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(12.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            items(3) {
-                LpSkeletonBox(
-                    modifier = Modifier
-                        .width(200.dp)
-                        .aspectRatio(16f / 9f),
-                )
-            }
-        }
     }
 }

@@ -14,4 +14,6 @@
     <string name="channel_uploads_desc">Notifications about new videos from channels you subscribed to</string>
     <string name="channel_downloads_name">Downloads</string>
     <string name="channel_downloads_desc">Download progress for saved videos</string>
+    <string name="channel_premiere_name">Premieres</string>
+    <string name="channel_premiere_desc">Reminders for premieres you asked to be notified about</string>
 </resources>

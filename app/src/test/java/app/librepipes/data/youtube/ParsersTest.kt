@@ -293,4 +293,108 @@ class ParsersTest {
         assertNull(Parsers.extractWatchPlayerResponse("var ytInitialPlayerResponse = ")) // truncated
         assertTrue(Parsers.parseChapters(JSONObject("{}")).isEmpty())
     }
+
+    // ------------------------------------------------- playability + premieres
+
+    private fun playerResponse(
+        status: String,
+        reason: String? = null,
+        errorCode: String? = null,
+    ): JSONObject {
+        val statusObj = JSONObject().put("status", status)
+        reason?.let { statusObj.put("reason", it) }
+        errorCode?.let { statusObj.put("errorCode", it) }
+        return JSONObject()
+            .put(
+                "playabilityStatus",
+                statusObj,
+            )
+            .put(
+                "videoDetails",
+                JSONObject()
+                    .put("videoId", "VID1")
+                    .put("title", "T")
+                    .put("lengthSeconds", "100")
+                    .put(
+                        "thumbnail",
+                        JSONObject().put("thumbnails", org.json.JSONArray().put(JSONObject().put("url", "https://i.ytimg.com/x.jpg"))),
+                    ),
+            )
+            .put("streamingData", JSONObject().put("formats", org.json.JSONArray()).put("adaptiveFormats", org.json.JSONArray()))
+    }
+
+    @Test(expected = PlayabilityException::class)
+    fun streamInfo_privateThrowsPlayabilityException() {
+        Parsers.parseStreamInfo(
+            playerResponse("LOGIN_REQUIRED", errorCode = "Video unavailable"),
+            "VID1",
+        )
+    }
+
+    @Test
+    fun playabilityKind_classifies() {
+        assertEquals(
+            PlayabilityKind.AGE_VERIFICATION,
+            PlayabilityException.classify("LOGIN_REQUIRED", "Sign in to confirm your age", ""),
+        )
+        assertEquals(
+            PlayabilityKind.AGE_RESTRICTED,
+            PlayabilityException.classify("LOGIN_REQUIRED", "Age-restricted video", ""),
+        )
+        assertEquals(
+            PlayabilityKind.PRIVATE,
+            PlayabilityException.classify("UNPLAYABLE", "This video is private", "UNKNOWN"),
+        )
+        assertEquals(
+            PlayabilityKind.REMOVED,
+            PlayabilityException.classify("UNPLAYABLE", "This video has been removed by the uploader", ""),
+        )
+        assertEquals(
+            PlayabilityKind.REGION_BLOCKED,
+            PlayabilityException.classify("UNPLAYABLE", "Video not available in your country", ""),
+        )
+        assertEquals(
+            PlayabilityKind.PREMIUM_REQUIRED,
+            PlayabilityException.classify("UNPLAYABLE", "Members-only content", ""),
+        )
+        assertEquals(
+            PlayabilityKind.PREMIUM_REQUIRED,
+            PlayabilityException.classify("UNPLAYABLE", "Watch with YouTube Premium", ""),
+        )
+        assertEquals(
+            PlayabilityKind.LIVE_NOT_STARTED,
+            PlayabilityException.classify("LIVE_STREAM_OFFLINE", "Stream is offline", ""),
+        )
+        assertEquals(
+            PlayabilityKind.UNPLAYABLE,
+            PlayabilityException.classify("UNPLAYABLE", "something else", ""),
+        )
+    }
+
+    @Test
+    fun streamInfo_upcomingIsNotAnError() {
+        val upcoming = playerResponse(
+            "LIVE_STREAM_OFFLINE",
+            reason = "This live event will begin soon",
+        )
+        upcoming.put(
+            "videoDetails",
+            JSONObject()
+                .put("videoId", "VID1")
+                .put("title", "T")
+                .put("startTimestamp", "1754186400")
+                .put("isUpcoming", true)
+                .put("lengthSeconds", "100")
+                .put("thumbnail", JSONObject().put("thumbnails", org.json.JSONArray().put(JSONObject().put("url", "https://i.ytimg.com/x.jpg")))),
+        )
+        val info = Parsers.parseStreamInfo(upcoming, "VID1")
+        assertNotNull(info.premiereAt)
+        assertEquals(1_754_186_400_000L, info.premiereAt)
+    }
+
+    @Test
+    fun streamInfo_premieresWithoutUpcomingFlagHaveNoPremiereAt() {
+        val info = Parsers.parseStreamInfo(playerResponse("OK"), "VID1")
+        assertNull(info.premiereAt)
+    }
 }

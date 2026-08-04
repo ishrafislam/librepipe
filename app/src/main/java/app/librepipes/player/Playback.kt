@@ -31,6 +31,8 @@ object Playback {
         val startPosition: Long,
         val audioOnly: Boolean,
         val subtitlesAvailable: Boolean,
+        /** Epoch millis when the first item goes live (premiere/countdown). */
+        val premiereAt: Long? = null,
     )
 
     /** Resolves the first stream plus the queue into playable media items. */
@@ -41,6 +43,19 @@ object Playback {
         val captionsOn = settings.captionsEnabled && !audioOnly
 
         val streamInfo = Extractor.stream(first.url)
+
+        // A premiere that hasn't gone live yet: nothing to play — the caller
+        // renders the countdown state instead.
+        if (streamInfo.premiereAt != null) {
+            return Resolved(
+                items = emptyList(),
+                startIndex = 0,
+                startPosition = 0L,
+                audioOnly = audioOnly,
+                subtitlesAvailable = false,
+                premiereAt = streamInfo.premiereAt,
+            )
+        }
 
         val startPosition = if (settings.recordHistory) {
             container.history.getByStreamId(first.id)?.let {
@@ -54,7 +69,7 @@ object Playback {
         for (ref in remaining) {
             val item = runCatching {
                 val info = Extractor.stream(ref.url)
-                buildItem(info, ref, audioOnly, captionsOn, settings.maxQuality)
+                if (info.premiereAt != null) null else buildItem(info, ref, audioOnly, captionsOn, settings.maxQuality)
             }.getOrNull()
             if (item != null) items += item
         }

@@ -48,9 +48,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.ChannelRef
-import app.librepipes.ui.components.EmptyState
 import app.librepipes.ui.components.kit.LpChannelRow
 import app.librepipes.ui.components.kit.LpDialog
+import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpFilterChip
 import app.librepipes.ui.components.kit.LpIconAction
 import app.librepipes.ui.components.kit.LpOutlinedTextField
@@ -125,10 +125,10 @@ fun SubscriptionsScreen(
         }
 
         when {
-            channels.isEmpty() -> EmptyState(
+            channels.isEmpty() -> LpEmptyState(
                 icon = Icons.Rounded.Subscriptions,
                 title = "No subscriptions",
-                subtitle = "Subscribe to channels to see their latest uploads here.",
+                message = "Subscribe to channels to see their latest uploads here.",
             )
 
             uploadsLoading && uploads.isEmpty() -> UploadsSkeleton()

@@ -30,9 +30,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PictureInPicture
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -41,6 +45,7 @@ import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material.icons.rounded.Upcoming
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -74,13 +79,19 @@ import app.librepipes.LibrePipeApp
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.DownloadMode
 import app.librepipes.data.model.StreamRef
+import app.librepipes.notify.PremiereReminder
 import app.librepipes.ui.components.AddToPlaylistDialog
+import app.librepipes.ui.components.kit.LpEmptyState
+import app.librepipes.ui.components.kit.LpErrorState
+import app.librepipes.ui.components.kit.LpFilledButton
 import app.librepipes.ui.components.kit.LpSeekBar
 import app.librepipes.ui.components.kit.LpSheet
 import app.librepipes.ui.components.kit.LpStatusPill
 import app.librepipes.ui.components.kit.LpSwitch
 import app.librepipes.ui.theme.LibrePipeTheme
+import app.librepipes.util.AppError
 import app.librepipes.util.Format
+import app.librepipes.util.toAppError
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -91,6 +102,9 @@ class NowPlayingActivity : ComponentActivity() {
     companion object {
         const val EXTRA_STREAM_JSON = "stream_json"
         const val EXTRA_QUEUE_JSON = "queue_json"
+        const val EXTRA_STREAM_ERROR_CODE = "stream_error_code"
+        const val EXTRA_STREAM_ERROR_MESSAGE = "stream_error_message"
+        const val EXTRA_PREMIERE_AT = "premiere_at"
     }
 
     private var controllerForPip: MediaController? = null
@@ -102,6 +116,9 @@ class NowPlayingActivity : ComponentActivity() {
         val initialRef = StreamRef.fromJson(intent?.getStringExtra(EXTRA_STREAM_JSON))
         val queue = intent?.getStringArrayListExtra(EXTRA_QUEUE_JSON)
             ?.mapNotNull { StreamRef.fromJson(it) } ?: emptyList()
+        val error = intent?.getStringExtra(EXTRA_STREAM_ERROR_CODE)
+            ?.let { code -> AppError(code, intent.getStringExtra(EXTRA_STREAM_ERROR_MESSAGE).orEmpty()) }
+        val premiereAt = intent?.getLongExtra(EXTRA_PREMIERE_AT, 0L)?.takeIf { it > 0 }
 
         setContent {
             LibrePipeTheme {
@@ -109,6 +126,8 @@ class NowPlayingActivity : ComponentActivity() {
                     onBack = { finish() },
                     initialRef = initialRef,
                     initialQueue = queue,
+                    initialError = error,
+                    initialPremiereAt = premiereAt,
                     pipMode = pipMode,
                     onControllerChanged = { controllerForPip = it },
                     onEnterPip = { enterPip() },
@@ -152,6 +171,8 @@ fun NowPlayingScreen(
     pipMode: Boolean,
     onControllerChanged: (MediaController?) -> Unit,
     onEnterPip: () -> Unit,
+    initialError: AppError? = null,
+    initialPremiereAt: Long? = null,
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as LibrePipeApp
@@ -173,12 +194,27 @@ fun NowPlayingScreen(
     var videoHeight by remember { mutableStateOf(0) }
     var chapters by remember { mutableStateOf<List<Float>>(emptyList()) }
     var autoplay by remember { mutableStateOf(true) }
+    var streamError by remember { mutableStateOf(initialError) }
+    var premiereAt by remember { mutableStateOf(initialPremiereAt) }
 
     fun currentRef(): StreamRef? = controller?.currentMediaItem
         ?.mediaMetadata?.extras?.getString(Playback.EXTRA_REF_JSON)
         ?.let { StreamRef.fromJson(it) }
+    val fallbackRef = currentRef() ?: initialRef
+    val playingDownload = controller?.currentMediaItem != null && currentRef() == null
 
     val isLive = currentRef()?.isLive == true
+
+    fun retryCurrent() {
+        val ref = initialRef ?: return
+        scope.launch {
+            val result = runCatching {
+                PlaybackOpener.startSession(context, ref, queueRefs.ifEmpty { listOf(ref) })
+            }
+            streamError = result.exceptionOrNull()?.toAppError()
+            result.getOrNull()?.premiereAt?.let { premiereAt = it }
+        }
+    }
 
     LaunchedEffect(Unit) {
         val c = PlaybackOpener.connect(context)
@@ -219,7 +255,11 @@ fun NowPlayingScreen(
 
         // Start playback when opened with a stream that isn't the current one
         if (initialRef != null && c.currentMediaItem?.mediaId != initialRef.id) {
-            PlaybackOpener.startSession(context, initialRef, initialQueue)
+            val result = runCatching {
+                PlaybackOpener.startSession(context, initialRef, initialQueue)
+            }
+            streamError = result.exceptionOrNull()?.toAppError()
+            result.getOrNull()?.premiereAt?.let { premiereAt = it }
         }
     }
 
@@ -265,8 +305,15 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        if (audioOnly) {
-            AudioOnlyPlayer(
+        when {
+            streamError != null -> PlayerErrorFrame(error = streamError!!, onRetry = { retryCurrent() })
+
+            premiereAt != null -> PremiereFrame(
+                ref = fallbackRef,
+                premiereAt = premiereAt!!,
+            )
+
+            audioOnly -> AudioOnlyPlayer(
                 ref = currentRef(),
                 isPlaying = isPlaying,
                 position = position,
@@ -279,27 +326,29 @@ fun NowPlayingScreen(
                 onSeek = { controller?.seekTo(it) },
                 chapters = chapters,
             )
-        } else {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        setShutterBackgroundColor(AndroidColor.BLACK)
-                    }
-                },
-                update = { playerView ->
-                    playerView.player = controller
-                    playerView.keepScreenOn = isPlaying
-                },
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures { controller?.playOrPause() }
-                    }
-            )
+
+            else -> {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            setShutterBackgroundColor(AndroidColor.BLACK)
+                        }
+                    },
+                    update = { playerView ->
+                        playerView.player = controller
+                        playerView.keepScreenOn = isPlaying
+                    },
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures { controller?.playOrPause() }
+                        }
+                )
+            }
         }
 
         if (!pipMode) {
@@ -316,7 +365,7 @@ fun NowPlayingScreen(
                     )
                     .statusBarsPadding()
             ) {
-                val ref = currentRef()
+                val ref = fallbackRef
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -399,6 +448,7 @@ fun NowPlayingScreen(
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (playingDownload) LpStatusPill(text = "Playing offline")
                             if (buffering) LpStatusPill(text = "Buffering…")
                             if (!isLive && videoHeight >= 360) LpStatusPill(text = "${videoHeight}p")
                         }
@@ -440,7 +490,7 @@ fun NowPlayingScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
-                    val ref = currentRef()
+                    val ref = fallbackRef
                     IconButton(onClick = {
                         if (ref != null) {
                             scope.launch {
@@ -508,7 +558,20 @@ fun NowPlayingScreen(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                 color = colors.outlineVariant,
             )
-            items.forEachIndexed { index, item ->
+            if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                ) {
+                    LpEmptyState(
+                        icon = Icons.Rounded.QueueMusic,
+                        title = "Queue is empty",
+                        message = "Videos you play next will show up here.",
+                    )
+                }
+            } else {
+                items.forEachIndexed { index, item ->
                 val ref = item.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
                     ?.let { StreamRef.fromJson(it) }
                 val isCurrent = item.mediaId == controller?.currentMediaItem?.mediaId
@@ -538,6 +601,7 @@ fun NowPlayingScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
             }
             HorizontalDivider(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
@@ -664,6 +728,113 @@ private fun AudioOnlyPlayer(
                 }
             }
         }
+    }
+}
+
+/** In-frame failure state (board 05): error stays inside the 16:9 surface. */
+@Composable
+private fun PlayerErrorFrame(error: AppError, onRetry: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        LpErrorState(
+            title = when (error.code) {
+                AppError.OFFLINE -> "You're offline"
+                AppError.PRIVATE -> "Private video"
+                AppError.REMOVED -> "Video unavailable"
+                AppError.TIMEOUT -> "Timed out"
+                else -> "Can't play this video"
+            },
+            message = error.message,
+            code = error.code,
+            icon = if (error.code == AppError.OFFLINE) Icons.Rounded.CloudOff else Icons.Rounded.ErrorOutline,
+            onRetry = { onRetry() },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** Premiere countdown (board 05): event_upcoming + ticking countdown + Remind me. */
+@Composable
+private fun PremiereFrame(ref: StreamRef?, premiereAt: Long) {
+    val context = LocalContext.current
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    var reminderSet by remember { mutableStateOf(false) }
+    LaunchedEffect(premiereAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val remaining = (premiereAt - now).coerceAtLeast(0L)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Upcoming,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(56.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "Premiere",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = ref?.title ?: "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.7f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            LpStatusPill(text = premiereCountdown(remaining))
+            Spacer(Modifier.height(20.dp))
+            LpFilledButton(
+                text = if (reminderSet) "Reminder set" else "Remind me",
+                leadingIcon = if (reminderSet) Icons.Rounded.Check else Icons.Rounded.Notifications,
+                onClick = {
+                    val r = ref ?: return@LpFilledButton
+                    PremiereReminder.schedule(context, r, premiereAt)
+                    reminderSet = true
+                },
+            )
+            if (reminderSet) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "You'll be notified when it goes live",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.6f),
+                )
+            }
+        }
+    }
+}
+
+private fun premiereCountdown(remainingMs: Long): String {
+    if (remainingMs <= 0) return "Starting now"
+    val totalMinutes = remainingMs / 60_000
+    return if (totalMinutes >= 60) {
+        val h = totalMinutes / 60
+        val m = totalMinutes % 60
+        "in ${h}h ${m}m"
+    } else {
+        val s = (remainingMs % 60_000) / 1000
+        "in ${totalMinutes}m ${s}s"
     }
 }
 

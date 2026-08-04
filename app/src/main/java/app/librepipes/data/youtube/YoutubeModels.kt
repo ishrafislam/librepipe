@@ -54,6 +54,8 @@ data class StreamInfo(
     val viewCount: Long = 0L,
     val textualDate: String? = null,
     val streamType: StreamType = StreamType.NORMAL,
+    /** Epoch millis when a premiere/live stream goes live; null otherwise. */
+    val premiereAt: Long? = null,
     /** Progressive formats (audio+video combined). */
     val videoStreams: List<StreamFormat> = emptyList(),
     /** Adaptive video-only formats. */

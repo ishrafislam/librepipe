@@ -5,7 +5,6 @@ import app.librepipes.data.model.PlaylistRef
 import app.librepipes.data.model.StreamRef
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
 
 /**
  * Pure JSON -> model parsing for InnerTube responses.
@@ -532,17 +531,29 @@ object Parsers {
 
     /** Player response -> full [StreamInfo] for playback & downloads. */
     fun parseStreamInfo(root: JSONObject, videoId: String): StreamInfo {
-        val status = root.optJSONObject("playabilityStatus")
-        if (status?.optString("status") != "OK") {
-            val reason = runsText(status?.optJSONObject("reason"))
-                ?: runsText(status?.optJSONObject("errorScreen")
+        val statusObj = root.optJSONObject("playabilityStatus")
+        val details = root.optJSONObject("videoDetails") ?: JSONObject()
+        val isUpcoming = details.optBoolean("isUpcoming")
+        val status = statusObj?.optString("status") ?: "ERROR"
+        if (status != "OK") {
+            val reason = runsText(statusObj?.optJSONObject("reason"))
+                ?: runsText(statusObj?.optJSONObject("errorScreen")
                     ?.optJSONObject("playerErrorMessageRenderer")
                     ?.optJSONObject("subreason"))
-                ?: status?.optString("reason")
+                ?: statusObj?.optString("reason")
                 ?: "Video unavailable"
-            throw IOException(reason)
+            // An upcoming premiere/live simply isn't live yet — surface it as a
+            // Countdown instead of an error.
+            if (!(status == "LIVE_STREAM_OFFLINE" && isUpcoming)) {
+                val errorCode = statusObj?.optString("errorCode")
+                throw PlayabilityException(
+                    status = status,
+                    kind = PlayabilityException.classify(status, reason, errorCode),
+                    errorCode = errorCode,
+                    message = reason,
+                )
+            }
         }
-        val details = root.optJSONObject("videoDetails") ?: JSONObject()
         val id = details.optString("videoId").ifBlank { videoId }
         val isLive = details.optBoolean("isLiveContent") || details.optBoolean("isLive")
         val streaming = root.optJSONObject("streamingData")
@@ -591,6 +602,9 @@ object Parsers {
             progressive.isEmpty() && audioOnly.isNotEmpty() && videoOnly.isEmpty() -> StreamType.AUDIO
             else -> StreamType.NORMAL
         }
+        val premiereAt = if (isUpcoming) {
+            (details.optString("startTimestamp").toLongOrNull() ?: 0L).takeIf { it > 0 }?.let { it * 1000 }
+        } else null
         return StreamInfo(
             id = id,
             title = details.optString("title").ifBlank { id },
@@ -601,6 +615,7 @@ object Parsers {
             duration = details.optString("lengthSeconds").toLongOrNull() ?: 0L,
             viewCount = details.optString("viewCount").toLongOrNull() ?: 0L,
             streamType = streamType,
+            premiereAt = premiereAt,
             videoStreams = progressive,
             videoOnlyStreams = videoOnly,
             audioStreams = audioOnly,

@@ -41,8 +41,8 @@ import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.DownloadMode
 import app.librepipes.data.model.DownloadState
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.EmptyState
 import app.librepipes.ui.components.kit.LpDialog
+import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpIconAction
 import app.librepipes.ui.components.kit.LpLinearProgress
 import app.librepipes.ui.components.kit.LpTopBar
@@ -76,10 +76,10 @@ fun DownloadsScreen(
         )
 
         if (downloads.isEmpty()) {
-            EmptyState(
+            LpEmptyState(
                 icon = Icons.Rounded.Download,
                 title = "No downloads",
-                subtitle = "Downloaded videos and audio will appear here.",
+                message = "Downloaded videos and audio will appear here.",
             )
             return@Column
         }

@@ -43,12 +43,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.ChannelRef
 import app.librepipes.data.model.StreamRef
-import app.librepipes.ui.components.ErrorState
-import app.librepipes.ui.components.LoadingState
+import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpIconAction
+import app.librepipes.ui.components.kit.LpListSkeleton
 import app.librepipes.ui.components.kit.LpPillButton
 import app.librepipes.ui.components.kit.LpTopBar
 import app.librepipes.ui.components.kit.LpVideoRow
+import app.librepipes.ui.components.kit.rememberDelayedSkeleton
 import app.librepipes.ui.viewmodels.ChannelViewModel
 import app.librepipes.util.Format
 import coil3.compose.AsyncImage
@@ -89,9 +90,14 @@ fun ChannelScreen(
             ),
         )
 
+        val skeleton = rememberDelayedSkeleton(loading && channel == null)
         when {
-            loading && channel == null -> LoadingState()
-            error != null && channel == null -> ErrorState(error.orEmpty(), onRetry = { vm.load() })
+            loading && channel == null -> if (skeleton) LpListSkeleton() else Box(Modifier.fillMaxSize())
+            error != null && channel == null -> LpErrorState(
+                message = error?.message.orEmpty(),
+                code = error?.code,
+                onRetry = { vm.load() },
+            )
             else -> {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     if (channel != null) {

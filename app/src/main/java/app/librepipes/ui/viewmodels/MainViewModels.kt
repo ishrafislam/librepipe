@@ -11,6 +11,8 @@ import app.librepipes.data.model.ChannelRef
 import app.librepipes.data.model.PlaylistRef
 import app.librepipes.data.model.StreamRef
 import app.librepipes.di.AppContainer
+import app.librepipes.util.AppError
+import app.librepipes.util.toAppError
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -28,7 +30,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     data class UiState(
         val loading: Boolean = true,
-        val error: String? = null,
+        val error: AppError? = null,
         val sections: List<HomeSection> = emptyList(),
         val trending: List<StreamRef> = emptyList(),
         val hasSubscriptions: Boolean = false,
@@ -92,7 +94,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(loading = false, error = e.message ?: "Could not load the feed") }
+                _uiState.update { it.copy(loading = false, error = e.toAppError()) }
             }
         }
     }
@@ -110,7 +112,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         private set
     var loading by mutableStateOf(false)
         private set
-    var error by mutableStateOf<String?>(null)
+    var error by mutableStateOf<AppError?>(null)
         private set
     var hasMore by mutableStateOf(false)
         private set
@@ -169,7 +171,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                 hasMore = f.hasMore
                 searched = true
             } catch (e: Exception) {
-                error = e.message ?: "Search failed"
+                error = e.toAppError()
             } finally {
                 loading = false
             }
@@ -206,7 +208,7 @@ class ChannelViewModel(
         private set
     var loadingMore by mutableStateOf(false)
         private set
-    var error by mutableStateOf<String?>(null)
+    var error by mutableStateOf<AppError?>(null)
         private set
     var subscribed by mutableStateOf(false)
         private set
@@ -233,7 +235,7 @@ class ChannelViewModel(
                 channel = f.channel
                 videos = f.videos.toList()
             } catch (e: Exception) {
-                error = e.message ?: "Could not load channel"
+                error = e.toAppError()
             } finally {
                 loading = false
             }
@@ -278,7 +280,7 @@ class PlaylistViewModel(
         private set
     var loadingMore by mutableStateOf(false)
         private set
-    var error by mutableStateOf<String?>(null)
+    var error by mutableStateOf<AppError?>(null)
         private set
 
     private var feed: Extractor.PlaylistFeed? = null
@@ -298,7 +300,7 @@ class PlaylistViewModel(
                 playlist = f.playlist
                 videos = f.videos.toList()
             } catch (e: Exception) {
-                error = e.message ?: "Could not load playlist"
+                error = e.toAppError()
             } finally {
                 loading = false
             }
