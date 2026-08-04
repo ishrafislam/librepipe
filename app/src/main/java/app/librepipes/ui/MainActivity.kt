@@ -8,6 +8,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -36,11 +39,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -57,6 +62,7 @@ import app.librepipes.player.PopupLauncher
 import app.librepipes.ui.components.kit.LpBottomBar
 import app.librepipes.ui.components.kit.LpMiniPlayer
 import app.librepipes.ui.components.kit.LpNavItem
+import app.librepipes.ui.components.kit.LpSplashScreen
 import app.librepipes.ui.screens.ChannelScreen
 import app.librepipes.ui.screens.DownloadsScreen
 import app.librepipes.ui.screens.HistoryScreen
@@ -68,6 +74,7 @@ import app.librepipes.ui.screens.SearchScreen
 import app.librepipes.ui.screens.SettingsScreen
 import app.librepipes.ui.screens.SubscriptionsScreen
 import app.librepipes.ui.theme.LibrePipeTheme
+import app.librepipes.ui.theme.Motion
 import app.librepipes.ui.viewmodels.ChannelViewModel
 import app.librepipes.ui.viewmodels.DownloadsViewModel
 import app.librepipes.ui.viewmodels.HistoryViewModel
@@ -81,6 +88,7 @@ import app.librepipes.ui.viewmodels.SettingsViewModel
 import app.librepipes.ui.viewmodels.SubscriptionsViewModel
 import app.librepipes.ui.viewmodels.appViewModel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -123,11 +131,24 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
             LibrePipeTheme(darkTheme = darkTheme, dynamicColor = dynamicColorPref) {
-                MainScreen(
-                    deepLink = deepLink,
-                    onRequestNotificationPermission = { requestNotificationPermission() },
-                    onDeepLinkConsumed = { deepLink = null },
-                )
+                var showSplash by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    delay(400)
+                    showSplash = false
+                }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    MainScreen(
+                        deepLink = deepLink,
+                        onRequestNotificationPermission = { requestNotificationPermission() },
+                        onDeepLinkConsumed = { deepLink = null },
+                    )
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        exit = fadeOut(animationSpec = tween(500, easing = Motion.Emphasized)),
+                    ) {
+                        LpSplashScreen(Modifier.fillMaxSize())
+                    }
+                }
             }
         }
     }
