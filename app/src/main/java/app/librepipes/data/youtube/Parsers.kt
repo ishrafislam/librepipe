@@ -681,9 +681,23 @@ object Parsers {
             height = o.optInt("height"),
             audioQuality = o.optString("audioQuality").ifBlank { null },
             approxDurationMs = o.optString("approxDurationMs").ifBlank { null },
+            codecs = mime.substringAfter("codecs=\"", "").substringBefore("\"").ifBlank { null },
+            contentLength = o.optString("contentLength").toLongOrNull() ?: 0L,
+            fps = o.optInt("fps"),
+            audioSampleRate = o.optString("audioSampleRate").toIntOrNull() ?: 0,
+            audioChannels = o.optInt("audioChannels"),
+            initRange = byteRange(o.optJSONObject("initRange")),
+            indexRange = byteRange(o.optJSONObject("indexRange")),
             hasVideo = codecs.any { c -> c.isCodec(VIDEO_CODECS) },
             hasAudio = codecs.any { c -> c.isCodec(AUDIO_CODECS) },
         )
+    }
+
+    /** `{"start":"0","end":"740"}` -> `"0-740"`; null when either bound is missing. */
+    private fun byteRange(o: JSONObject?): String? {
+        val start = o?.optString("start")?.takeIf { it.isNotBlank() } ?: return null
+        val end = o.optString("end").takeIf { it.isNotBlank() } ?: return null
+        return "$start-$end"
     }
 
     /** "avc1.42001e" matches codec family "avc1" (dotted profile suffixes stripped). */

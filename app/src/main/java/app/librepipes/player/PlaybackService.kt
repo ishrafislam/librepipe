@@ -32,12 +32,10 @@ class PlaybackService : MediaSessionService() {
             )
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setMediaSourceFactory(
-                AdaptiveMediaSourceFactory(
-                    DefaultMediaSourceFactory(this).setDataSourceFactory(
-                        DefaultDataSource.Factory(
-                            this,
-                            OkHttpDataSource.Factory(app.container.okHttpClient)
-                        )
+                DefaultMediaSourceFactory(this).setDataSourceFactory(
+                    DefaultDataSource.Factory(
+                        this,
+                        OkHttpDataSource.Factory(app.container.okHttpClient)
                     )
                 )
             )

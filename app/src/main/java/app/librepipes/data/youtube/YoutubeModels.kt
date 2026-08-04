@@ -15,6 +15,16 @@ data class StreamFormat(
     val height: Int = 0,
     val audioQuality: String? = null,
     val approxDurationMs: String? = null,
+    /** Codec string from the mimeType's `codecs="…"` clause, e.g. "avc1.640028". */
+    val codecs: String? = null,
+    val contentLength: Long = 0L,
+    val fps: Int = 0,
+    val audioSampleRate: Int = 0,
+    val audioChannels: Int = 0,
+    /** Byte range of the init segment, "start-end". Required to build a DASH manifest. */
+    val initRange: String? = null,
+    /** Byte range of the segment index, "start-end". Required to build a DASH manifest. */
+    val indexRange: String? = null,
     /** Whether the format carries a video (avc1/vp9/av01/...) track. */
     val hasVideo: Boolean = true,
     /** Whether the format carries an audio (mp4a/opus/...) track. */

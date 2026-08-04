@@ -80,6 +80,8 @@ class WatchViewModel(
 
     private var controller: MediaController? = null
     private var chapterSeconds: List<Long> = emptyList()
+    /** Set once we've dropped to the progressive stream, so a retry can't loop. */
+    private var fellBackToProgressive = false
 
     init {
         viewModelScope.launch {
@@ -95,9 +97,6 @@ class WatchViewModel(
                 info = stream
                 availableHeights = Playback.availableHeights(stream)
                 val settings = container.settings.snapshot()
-                currentHeight = Playback
-                    .selectStreams(stream, settings.audioOnly || initialRef.isAudio, settings.maxQuality)
-                    .height
                 captionsOn = settings.captionsEnabled
                 applyCaptions(settings.captionsEnabled)
             }
@@ -144,23 +143,40 @@ class WatchViewModel(
     }
 
     /**
-     * Rebuilds the current item at [height]. Without a DASH manifest there is no
-     * seamless track switch, so this reloads and re-seeks — hence capturing position
-     * and play state first, or a paused video would silently resume.
+     * Caps the video track height. With a DASH manifest this is pure track selection —
+     * instant, keeps position, no reload.
      */
     fun setQuality(height: Int) {
         val c = controller ?: return
+        c.trackSelectionParameters = c.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE, height)
+            .build()
+        viewModelScope.launch { container.settings.setMaxQuality(height) }
+    }
+
+    /**
+     * Some videos are gated: most of the file is served but the tail 403s, so playback
+     * dies partway through rather than at startup. Rebuild from the progressive stream
+     * and carry on from the same position.
+     */
+    private fun fallbackToProgressive() {
+        val c = controller ?: return
         val stream = info ?: return
+        if (fellBackToProgressive) return
+        // Gated videos 403 on the last bytes. If we're already at the end there is
+        // nothing left to play, so reloading would just churn.
+        val remaining = c.duration - c.currentPosition
+        if (c.duration > 0 && remaining < 3_000) return
+        fellBackToProgressive = true
         viewModelScope.launch {
-            container.settings.setMaxQuality(height)
             val position = c.currentPosition
             val wasPlaying = c.isPlaying
             val audioOnly = container.settings.snapshot().audioOnly || ref.isAudio
-            val item = Playback.buildItem(stream, ref, audioOnly, height)
+            val item = Playback.buildItem(stream, ref, audioOnly, 0, forceProgressive = true)
             c.setMediaItem(item, position)
             c.prepare()
             if (wasPlaying) c.play()
-            currentHeight = Playback.selectStreams(stream, audioOnly, height).height
+            availableHeights = emptyList()
             applyCaptions(captionsOn)
         }
     }
@@ -224,6 +240,17 @@ class WatchViewModel(
         c.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) = refresh(player)
 
+            override fun onPlayerError(e: androidx.media3.common.PlaybackException) {
+                if (e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                    e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED ||
+                    e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+                ) {
+                    fallbackToProgressive()
+                } else {
+                    error = AppError(code = "PLAYBACK", message = e.message ?: "Playback failed")
+                }
+            }
+
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 mediaItem?.mediaMetadata?.extras?.getString(Playback.EXTRA_REF_JSON)
                     ?.let { StreamRef.fromJson(it) }
@@ -251,6 +278,8 @@ class WatchViewModel(
         }
         hasNext = player.hasNextMediaItem()
         hasPrev = player.hasPreviousMediaItem()
+        // Report what is actually rendering: ExoPlayer may adapt below the requested cap.
+        player.videoSize.height.takeIf { it > 0 }?.let { currentHeight = it }
     }
 
     /**
