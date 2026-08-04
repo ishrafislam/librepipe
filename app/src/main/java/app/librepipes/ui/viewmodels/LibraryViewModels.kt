@@ -6,7 +6,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.librepipes.data.db.DownloadEntity
-import app.librepipes.data.db.GroupEntity
 import app.librepipes.data.db.HistoryEntity
 import app.librepipes.data.db.LocalPlaylistEntity
 import app.librepipes.data.db.SubscriptionEntity
@@ -14,10 +13,12 @@ import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.DownloadState
 import app.librepipes.data.model.StreamRef
 import app.librepipes.di.AppContainer
+import app.librepipes.util.AppError
+import app.librepipes.util.Format
+import app.librepipes.util.toAppError
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 // ------------------------------------------------------------------- Library
@@ -113,104 +114,180 @@ class DownloadsViewModel(private val container: AppContainer) : ViewModel() {
 
 class SubscriptionsViewModel(private val container: AppContainer) : ViewModel() {
 
-    data class ChannelItem(val subscription: SubscriptionEntity, val groupIds: List<Long>)
-    data class UploadItem(val ref: StreamRef, val channel: SubscriptionEntity, val isNew: Boolean)
+    enum class ViewMode { LIST, GRID }
+
+    data class ChannelItem(val subscription: SubscriptionEntity, val hasNew: Boolean)
 
     var channels by mutableStateOf<List<ChannelItem>>(emptyList())
         private set
-    var groups by mutableStateOf<List<GroupEntity>>(emptyList())
+    /** null = every subscription pooled together. */
+    var selectedChannelUrl by mutableStateOf<String?>(null)
+        private set
+    var videos by mutableStateOf<List<StreamRef>>(emptyList())
         private set
     var loading by mutableStateOf(true)
         private set
-    var selectedGroupId by mutableStateOf<Long?>(null)
-    var uploads by mutableStateOf<List<UploadItem>>(emptyList())
+    var loadingMore by mutableStateOf(false)
         private set
-    var uploadsLoading by mutableStateOf(false)
+    var hasMore by mutableStateOf(false)
+        private set
+    var error by mutableStateOf<AppError?>(null)
+        private set
+    var viewMode by mutableStateOf(ViewMode.GRID)
         private set
 
-    private var feedsFetched = false
+    /**
+     * Every video fetched so far across all subscriptions, newest first. YouTube has no
+     * anonymous aggregate subscription feed, so this is assembled channel by channel in
+     * background batches while the user reads the first page.
+     */
+    private val pool = mutableListOf<StreamRef>()
+    private var pooledChannels = 0
+    private var visibleCount = PAGE
+    private var channelFeed: Extractor.ChannelFeed? = null
+    private var started = false
 
     init {
         viewModelScope.launch {
-            combine(
-                container.subscriptions.observeAll(),
-                container.groups.observeGroups(),
-                container.groups.observeChannelRefs(),
-            ) { subs, gs, refs -> Triple(subs, gs, refs) }
-                .collect { (subs, gs, refs) ->
-                    channels = subs.map { sub ->
-                        ChannelItem(
-                            sub,
-                            refs.filter { it.channelUrl == sub.channelUrl }.map { it.groupId },
-                        )
-                    }
-                    groups = gs
+            container.settings.viewMode.collect {
+                viewMode = if (it == 0) ViewMode.LIST else ViewMode.GRID
+            }
+        }
+        viewModelScope.launch {
+            container.subscriptions.observeAll().collect { subs ->
+                channels = subs.map { ChannelItem(it, hasNew = it.lastCheckedAt > it.lastVisitedAt) }
+                if (subs.isEmpty()) {
                     loading = false
-                    if (subs.isNotEmpty() && !feedsFetched) {
-                        feedsFetched = true
-                        refreshUploads()
-                    }
+                } else if (!started) {
+                    started = true
+                    refresh()
                 }
+            }
         }
     }
 
-    fun selectGroup(groupId: Long?) {
-        selectedGroupId = groupId
+    fun setViewMode(mode: ViewMode) = viewModelScope.launch {
+        container.settings.setViewMode(if (mode == ViewMode.LIST) 0 else 1)
     }
 
-    fun refreshUploads() {
-        val subs = channels.map { it.subscription }
-        if (subs.isEmpty()) {
-            uploads = emptyList()
+    /** Tap a channel to filter to it; pass null (or the same url again) to go back to all. */
+    fun selectChannel(channelUrl: String?) {
+        if (channelUrl == selectedChannelUrl) return
+        selectedChannelUrl = channelUrl
+        error = null
+        if (channelUrl == null) {
+            channelFeed = null
+            publishPool()
+            return
+        }
+        markChannelSeen(channelUrl)
+        channelFeed = null
+        videos = emptyList()
+        hasMore = false
+        viewModelScope.launch {
+            loading = true
+            try {
+                val feed = Extractor.channel(channelUrl)
+                feed.loadInitial()
+                channelFeed = feed
+                videos = feed.videos.toList()
+                hasMore = feed.hasMore
+            } catch (e: Exception) {
+                error = e.toAppError()
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    fun refresh() {
+        pool.clear()
+        pooledChannels = 0
+        visibleCount = PAGE
+        videos = emptyList()
+        error = null
+        selectedChannelUrl = null
+        channelFeed = null
+        if (channels.isEmpty()) {
+            loading = false
+            hasMore = false
             return
         }
         viewModelScope.launch {
-            uploadsLoading = true
-            val items = coroutineScope {
-                subs.take(20).map { sub ->
-                    async {
-                        runCatching {
-                            val feed = Extractor.channel(sub.channelUrl)
-                            feed.loadInitial()
-                            feed.videos.firstOrNull()?.let { first ->
-                                UploadItem(
-                                    ref = first,
-                                    channel = sub,
-                                    isNew = sub.lastCheckedAt > sub.lastVisitedAt && first.id == sub.latestStreamId,
-                                )
-                            }
-                        }.getOrNull()
-                    }
-                }.awaitAll().filterNotNull()
+            loading = true
+            fetchNextBatch()
+            if (pool.isEmpty()) {
+                error = AppError(code = "SUBS_EMPTY", message = "Couldn't load uploads.")
             }
-            uploads = items
-            uploadsLoading = false
+            loading = false
         }
+    }
+
+    fun loadMore() {
+        if (loadingMore || loading || !hasMore) return
+        val feed = channelFeed
+        viewModelScope.launch {
+            loadingMore = true
+            if (feed != null) {
+                // Single-channel mode: real network pagination off the channel's cursor.
+                val ok = runCatching { feed.loadMore() }.getOrDefault(false)
+                if (ok) videos = feed.videos.toList()
+                hasMore = feed.hasMore && ok
+            } else {
+                visibleCount += PAGE
+                // Reveal from the pool, topping it up whenever we would run past the end.
+                while (pool.size < visibleCount && pooledChannels < channels.size) {
+                    fetchNextBatch()
+                }
+                publishPool()
+            }
+            loadingMore = false
+        }
+    }
+
+    /** Fetches the next [BATCH] channels and merges everything they return into [pool]. */
+    private suspend fun fetchNextBatch() {
+        val batch = channels.drop(pooledChannels).take(BATCH).map { it.subscription }
+        if (batch.isEmpty()) {
+            hasMore = false
+            return
+        }
+        pooledChannels += batch.size
+        val fetched = coroutineScope {
+            batch.map { sub ->
+                async {
+                    runCatching {
+                        val feed = Extractor.channel(sub.channelUrl)
+                        feed.loadInitial()
+                        feed.videos.toList()
+                    }.getOrNull()
+                }
+            }.awaitAll().filterNotNull().flatten()
+        }
+        val seen = pool.mapTo(HashSet()) { it.id }
+        for (video in fetched) if (seen.add(video.id)) pool += video
+        // Sort every pass: a later batch can contain videos newer than the current page.
+        pool.sortByDescending { Format.approxPublishedAt(it.textualDate) ?: Long.MIN_VALUE }
+        publishPool()
+    }
+
+    private fun publishPool() {
+        videos = pool.take(visibleCount)
+        hasMore = visibleCount < pool.size || pooledChannels < channels.size
     }
 
     fun markAllSeen() = viewModelScope.launch {
         container.subscriptions.markAllVisited(System.currentTimeMillis())
-        uploads = uploads.map { it.copy(isNew = false) }
     }
 
     fun markChannelSeen(channelUrl: String) = viewModelScope.launch {
         container.subscriptions.markVisited(channelUrl, System.currentTimeMillis())
-        uploads = uploads.map {
-            if (it.channel.channelUrl == channelUrl) it.copy(isNew = false) else it
-        }
     }
 
-    fun createGroup(name: String) = viewModelScope.launch { container.groups.createGroup(name) }
-
-    fun renameGroup(id: Long, name: String) = viewModelScope.launch { container.groups.renameGroup(id, name) }
-
-    fun deleteGroup(id: Long) = viewModelScope.launch {
-        container.groups.deleteGroup(id)
-        if (selectedGroupId == id) selectedGroupId = null
+    private companion object {
+        const val PAGE = 20
+        const val BATCH = 5
     }
-
-    fun assignChannel(channelUrl: String, groupId: Long?) =
-        viewModelScope.launch { container.groups.assignChannel(channelUrl, groupId) }
 }
 
 // --------------------------------------------------------- Local playlist

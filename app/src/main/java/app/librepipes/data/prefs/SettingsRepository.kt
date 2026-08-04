@@ -25,6 +25,7 @@ class SettingsRepository(private val context: Context) {
         val DOWNLOAD_QUALITY = intPreferencesKey("download_quality")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val AUTOPLAY = booleanPreferencesKey("autoplay")
+        val VIEW_MODE = intPreferencesKey("view_mode")         // 0 list, 1 grid
     }
 
     private val dataStore = context.settingsDataStore
@@ -39,6 +40,7 @@ class SettingsRepository(private val context: Context) {
     val downloadQuality: Flow<Int> = dataStore.data.map { it[Keys.DOWNLOAD_QUALITY] ?: 1080 }
     val dynamicColor: Flow<Boolean> = dataStore.data.map { it[Keys.DYNAMIC_COLOR] ?: true }
     val autoplay: Flow<Boolean> = dataStore.data.map { it[Keys.AUTOPLAY] ?: true }
+    val viewMode: Flow<Int> = dataStore.data.map { it[Keys.VIEW_MODE] ?: 1 }
 
     suspend fun setTheme(value: Int) = dataStore.edit { it[Keys.THEME] = value }
     suspend fun setMaxQuality(value: Int) = dataStore.edit { it[Keys.MAX_QUALITY] = value }
@@ -50,6 +52,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDownloadQuality(value: Int) = dataStore.edit { it[Keys.DOWNLOAD_QUALITY] = value }
     suspend fun setDynamicColor(value: Boolean) = dataStore.edit { it[Keys.DYNAMIC_COLOR] = value }
     suspend fun setAutoplay(value: Boolean) = dataStore.edit { it[Keys.AUTOPLAY] = value }
+    suspend fun setViewMode(value: Int) = dataStore.edit { it[Keys.VIEW_MODE] = value }
 
     data class Snapshot(
         val theme: Int,
@@ -62,6 +65,7 @@ class SettingsRepository(private val context: Context) {
         val downloadQuality: Int,
         val dynamicColor: Boolean,
         val autoplay: Boolean,
+        val viewMode: Int,
     )
 
     suspend fun snapshot(): Snapshot {
@@ -77,6 +81,7 @@ class SettingsRepository(private val context: Context) {
             downloadQuality = prefs[Keys.DOWNLOAD_QUALITY] ?: 1080,
             dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: true,
             autoplay = prefs[Keys.AUTOPLAY] ?: true,
+            viewMode = prefs[Keys.VIEW_MODE] ?: 1,
         )
     }
 }

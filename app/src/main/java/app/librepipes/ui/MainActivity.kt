@@ -352,7 +352,12 @@ private fun AppNavHost(
             )
         }
         composable(Routes.SUBSCRIPTIONS) {
-            SubscriptionsScreen(appViewModel { SubscriptionsViewModel(it) }, openChannel, openSearch)
+            SubscriptionsScreen(
+                appViewModel { SubscriptionsViewModel(it) },
+                openVideo,
+                openChannel,
+                openSearch,
+            )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(

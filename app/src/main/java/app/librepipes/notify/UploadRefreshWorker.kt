@@ -44,10 +44,13 @@ class UploadRefreshWorker(
                 if (newVideos.isNotEmpty() && subscription.latestStreamId != null) {
                     postUploadNotifications(subscription, newVideos)
                 }
+                // Only advance the timestamp when something actually arrived: the unread
+                // ring and the nav badge both read lastCheckedAt > lastVisitedAt, so
+                // bumping it unconditionally would mark every channel unread each pass.
                 container.subscriptions.markChecked(
                     subscription.channelUrl,
                     latest,
-                    System.currentTimeMillis(),
+                    if (newVideos.isNotEmpty()) System.currentTimeMillis() else subscription.lastCheckedAt,
                 )
             } catch (e: Exception) {
                 failedChannels++
