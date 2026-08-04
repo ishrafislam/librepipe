@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.R
@@ -220,42 +221,23 @@ private fun HomeTopBar(onOpenSearch: () -> Unit) {
             modifier = Modifier.size(28.dp),
         )
         Spacer(Modifier.width(12.dp))
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(40.dp)
-                .clip(ShapeTokens.full)
-                .background(colors.surfaceContainer)
-                .clickable(onClick = onOpenSearch),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Rounded.Search,
-                    contentDescription = null,
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Search Librepipe",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "Librepipe",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         Icon(
-            Icons.Rounded.MoreVert,
-            contentDescription = null,
-            tint = colors.onSurfaceVariant,
+            Icons.Rounded.Search,
+            contentDescription = "Search",
+            tint = colors.onSurface,
             modifier = Modifier
                 .size(48.dp)
+                .clip(ShapeTokens.full)
+                .clickable(onClick = onOpenSearch)
                 .padding(12.dp),
         )
     }
