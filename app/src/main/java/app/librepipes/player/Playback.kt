@@ -35,6 +35,8 @@ object Playback {
         val subtitlesAvailable: Boolean,
         /** Epoch millis when the first item goes live (premiere/countdown). */
         val premiereAt: Long? = null,
+        /** Shared so callers don't issue a second player request for the same video. */
+        val streamInfo: StreamInfo? = null,
     )
 
     /** Resolves the first stream plus the queue into playable media items. */
@@ -81,6 +83,7 @@ object Playback {
             startPosition = startPosition,
             audioOnly = audioOnly,
             subtitlesAvailable = streamInfo.subtitles.isNotEmpty(),
+            streamInfo = streamInfo,
         )
     }
 
@@ -97,8 +100,10 @@ object Playback {
         maxHeight: Int,
         /** Skip the manifest and use the progressive stream — the runtime fallback path. */
         forceProgressive: Boolean = false,
+        /** Pin to exactly [maxHeight] rather than allowing anything up to it. */
+        exactHeight: Boolean = false,
     ): MediaItem {
-        val selection = selectStreams(info, audioOnly, maxHeight, forceProgressive)
+        val selection = selectStreams(info, audioOnly, maxHeight, forceProgressive, exactHeight)
 
         val metadata = MediaMetadata.Builder()
             .setTitle(ref.title)
@@ -136,9 +141,15 @@ object Playback {
         audioOnly: Boolean,
         maxHeight: Int,
         forceProgressive: Boolean = false,
+        exactHeight: Boolean = false,
     ): Selection {
         if (audioOnly || info.streamType == StreamType.AUDIO) {
-            val audio = info.audioStreams.maxByOrNull { it.bitrate }
+            // On a dubbed video the highest bitrate is an arbitrary language; prefer
+            // the original track first.
+            // Always the original track on a dubbed video.
+            val audio = info.audioStreams
+                .let { all -> all.filter { it.audioIsDefault }.ifEmpty { all } }
+                .maxByOrNull { it.bitrate }
             val url = audio?.url
                 ?: info.videoStreams.firstOrNull()?.url
                 ?: info.hlsUrl
@@ -158,7 +169,7 @@ object Playback {
         // video-only streams 403 the range-less whole-file read a progressive source
         // issues. Segment requests are bounded, which googlevideo does serve.
         if (!forceProgressive) {
-            val manifest = DashManifest.build(info, cap)
+            val manifest = DashManifest.build(info, cap, exactHeight)
             if (manifest != null) {
                 val encoded = Base64.encodeToString(manifest.toByteArray(), Base64.NO_WRAP)
                 val height = DashManifest.availableHeights(info).firstOrNull { it <= cap } ?: 0

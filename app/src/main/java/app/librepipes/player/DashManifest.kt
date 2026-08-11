@@ -26,18 +26,29 @@ object DashManifest {
      * when this video can't be expressed as one (live, audio-only, missing byte ranges).
      * Callers fall back to the progressive stream on null.
      */
-    fun build(info: StreamInfo, maxHeight: Int): String? {
+    fun build(info: StreamInfo, maxHeight: Int, exactHeight: Boolean = false): String? {
         if (info.streamType != StreamType.NORMAL) return null
 
         val cap = if (maxHeight > 0) maxHeight else Int.MAX_VALUE
         // One codec family only: mixing avc1 and vp9 in an AdaptationSet tells the
         // adaptive selector they're interchangeable. avc1 decodes on the widest range
         // of devices.
-        val videos = info.videoOnlyStreams
+        val usableVideos = info.videoOnlyStreams
             .filter { it.isUsable() && it.codecs?.startsWith("avc1") == true && it.height in 1..cap }
             .sortedBy { it.height }
+        // Pinning matters: emitting everything up to the cap lets ExoPlayer adapt down
+        // by bandwidth, so choosing 1080p on a slow link silently keeps playing 240p and
+        // the choice looks ignored. One representation leaves nothing to adapt to.
+        val videos = if (exactHeight) {
+            usableVideos.lastOrNull()?.let { top -> usableVideos.filter { it.height == top.height } }
+                ?: usableVideos
+        } else {
+            usableVideos
+        }
+        // The original track is listed twice with an identical id, so dedupe.
         val audios = info.audioStreams
             .filter { it.isUsable() && it.codecs?.startsWith("mp4a") == true }
+            .distinctBy { it.audioTrackId to it.itag }
             .sortedBy { it.bitrate }
 
         if (videos.isEmpty() || audios.isEmpty()) return null
@@ -68,22 +79,38 @@ object DashManifest {
             }
             append("</AdaptationSet>")
 
-            append("""<AdaptationSet mimeType="audio/mp4" subsegmentAlignment="true">""")
-            audios.forEach { f ->
-                append("""<Representation id="${f.itag}" codecs="${f.codecs}" bandwidth="${f.bitrate}"""")
-                if (f.audioSampleRate > 0) append(""" audioSamplingRate="${f.audioSampleRate}"""")
-                append(">")
-                if (f.audioChannels > 0) {
-                    append(
-                        """<AudioChannelConfiguration """ +
-                            """schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" """ +
-                            """value="${f.audioChannels}"/>""",
-                    )
+            // Exactly one audio AdaptationSet, always the video's original track.
+            // Emitting every dub made ExoPlayer treat them as interchangeable bitrate
+            // variants and swap language mid-playback.
+            val chosenId = audios.firstOrNull { it.audioIsDefault }?.audioTrackId
+            audios.groupBy { it.audioTrackId }
+                .filterKeys { chosenId == null || it == chosenId }
+                .forEach { (trackId, formats) ->
+                    val best = formats.maxByOrNull { it.bitrate } ?: return@forEach
+                    val lang = best.audioLanguage
+                    append("""<AdaptationSet mimeType="audio/mp4" subsegmentAlignment="true"""")
+                    if (lang != null) append(""" lang="${escape(lang)}"""")
+                    append(">")
+                    // Marks the original track, which ExoPlayer falls back to when no
+                    // language preference matches.
+                    if (best.audioIsDefault) {
+                        append("""<Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>""")
+                    }
+                    val id = listOfNotNull(best.itag.toString(), trackId).joinToString("-")
+                    append("""<Representation id="${escape(id)}" codecs="${best.codecs}" bandwidth="${best.bitrate}"""")
+                    if (best.audioSampleRate > 0) append(""" audioSamplingRate="${best.audioSampleRate}"""")
+                    append(">")
+                    if (best.audioChannels > 0) {
+                        append(
+                            """<AudioChannelConfiguration """ +
+                                """schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" """ +
+                                """value="${best.audioChannels}"/>""",
+                        )
+                    }
+                    append(segments(best))
+                    append("</Representation>")
+                    append("</AdaptationSet>")
                 }
-                append(segments(f))
-                append("</Representation>")
-            }
-            append("</AdaptationSet>")
 
             append("</Period></MPD>")
         }

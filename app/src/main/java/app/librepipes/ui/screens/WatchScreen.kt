@@ -2,6 +2,7 @@ package app.librepipes.ui.screens
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -337,8 +338,12 @@ private enum class OptionsPage { MENU, QUALITY, SPEED }
 private val SPEEDS = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
 
 /**
- * Player options. Quality and speed swap the sheet's contents in place rather than
- * stacking a second sheet on top of the first.
+ * Drill-down player options: a short root list, then a page per setting.
+ *
+ * The page swap runs through [AnimatedContent] so both pages are composed during the
+ * transition. Replacing the sheet's whole subtree in a single frame lets it re-measure
+ * through an empty state and settle to Hidden, which fires onDismissRequest — that is
+ * what previously closed the sheet instead of navigating.
  */
 @Composable
 private fun PlayerOptionsSheet(
@@ -354,50 +359,58 @@ private fun PlayerOptionsSheet(
             OptionsPage.SPEED -> "Playback speed"
         },
         onDismiss = onDismiss,
+        onBack = if (page == OptionsPage.MENU) null else ({ page = OptionsPage.MENU }),
     ) {
-        when (page) {
-            OptionsPage.MENU -> {
-                OptionRow(
-                    label = "Quality",
-                    value = vm.currentHeight.takeIf { it > 0 }?.let { "${it}p" },
-                    enabled = vm.availableHeights.isNotEmpty(),
-                    onClick = { page = OptionsPage.QUALITY },
-                )
-                OptionRow(
-                    label = "Playback speed",
-                    value = speedLabel(vm.playbackSpeed),
-                    onClick = { page = OptionsPage.SPEED },
-                )
-                OptionRow(
-                    label = "Captions",
-                    onClick = { vm.toggleCaptions() },
-                    trailing = {
-                        LpSwitch(checked = vm.captionsOn, onCheckedChange = { vm.toggleCaptions() })
-                    },
-                )
-                OptionRow(label = "Lock screen", onClick = onLock)
-            }
+        AnimatedContent(targetState = page, label = "options-page") { current ->
+            Column(modifier = Modifier.fillMaxWidth()) {
+                when (current) {
+                    OptionsPage.MENU -> {
+                        OptionRow(
+                            label = "Quality",
+                            value = vm.currentHeight.takeIf { it > 0 }?.let { "${it}p" },
+                            enabled = vm.availableHeights.isNotEmpty(),
+                            onClick = { page = OptionsPage.QUALITY },
+                        )
+                        OptionRow(
+                            label = "Playback speed",
+                            value = speedLabel(vm.playbackSpeed),
+                            onClick = { page = OptionsPage.SPEED },
+                        )
+                        OptionRow(
+                            label = "Captions",
+                            onClick = { vm.toggleCaptions() },
+                            trailing = {
+                                LpSwitch(
+                                    checked = vm.captionsOn,
+                                    onCheckedChange = { vm.toggleCaptions() },
+                                )
+                            },
+                        )
+                        OptionRow(label = "Lock screen", onClick = onLock)
+                    }
 
-            OptionsPage.QUALITY -> vm.availableHeights.forEach { height ->
-                ChoiceRow(
-                    label = "${height}p",
-                    selected = height == vm.currentHeight,
-                    onClick = {
-                        vm.setQuality(height)
-                        onDismiss()
-                    },
-                )
-            }
+                    OptionsPage.QUALITY -> vm.availableHeights.forEach { height ->
+                        ChoiceRow(
+                            label = "${height}p",
+                            selected = height == vm.currentHeight,
+                            onClick = {
+                                vm.setQuality(height)
+                                onDismiss()
+                            },
+                        )
+                    }
 
-            OptionsPage.SPEED -> SPEEDS.forEach { value ->
-                ChoiceRow(
-                    label = speedLabel(value),
-                    selected = value == vm.playbackSpeed,
-                    onClick = {
-                        vm.changeSpeed(value)
-                        onDismiss()
-                    },
-                )
+                    OptionsPage.SPEED -> SPEEDS.forEach { value ->
+                        ChoiceRow(
+                            label = speedLabel(value),
+                            selected = value == vm.playbackSpeed,
+                            onClick = {
+                                vm.changeSpeed(value)
+                                onDismiss()
+                            },
+                        )
+                    }
+                }
             }
         }
     }

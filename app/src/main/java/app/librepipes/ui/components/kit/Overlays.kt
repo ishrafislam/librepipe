@@ -25,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +66,8 @@ fun LpSheet(
     title: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Supply on a drill-down page to show a back arrow beside the title. */
+    onBack: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(
@@ -95,18 +99,43 @@ fun LpSheet(
                 .navigationBarsPadding()
                 .imePadding(),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onBack != null) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .size(48.dp)
+                            .clip(ShapeTokens.full)
+                            .clickable(onClick = onBack)
+                            .padding(12.dp),
+                    )
+                }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(
+                            start = if (onBack != null) 4.dp else 24.dp,
+                            end = 24.dp,
+                            top = 16.dp,
+                            bottom = 16.dp,
+                        ),
+                )
+            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = (screenHeight * 0.6f).dp)
+                    // A floor keeps a page swap from collapsing the content toward zero,
+                    // which re-anchors the sheet and settles it to Hidden — i.e. the
+                    // sheet closing instead of navigating.
+                    .heightIn(min = 200.dp, max = (screenHeight * 0.6f).dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {

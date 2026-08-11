@@ -21,6 +21,14 @@ data class StreamFormat(
     val fps: Int = 0,
     val audioSampleRate: Int = 0,
     val audioChannels: Int = 0,
+    /** Dubbed-track id, e.g. "bn.3"; null on single-track videos. */
+    val audioTrackId: String? = null,
+    /** Human label for the track, e.g. "Bangla" or "English original". */
+    val audioTrackName: String? = null,
+    /** True for the video's original-language track. */
+    val audioIsDefault: Boolean = false,
+    /** BCP-47-ish language tag, e.g. "bn" or "zh-Hans". */
+    val audioLanguage: String? = null,
     /** Byte range of the init segment, "start-end". Required to build a DASH manifest. */
     val initRange: String? = null,
     /** Byte range of the segment index, "start-end". Required to build a DASH manifest. */

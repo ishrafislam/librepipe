@@ -671,6 +671,7 @@ object Parsers {
         val mime = o.optString("mimeType").ifBlank { "video/mp4" }
         val codecs = mime.substringAfter("codecs=\"").substringBefore("\"")
             .split(',').map { it.trim().lowercase() }
+        val track = o.optJSONObject("audioTrack")
         return StreamFormat(
             url = url,
             itag = o.optInt("itag"),
@@ -688,6 +689,13 @@ object Parsers {
             audioChannels = o.optInt("audioChannels"),
             initRange = byteRange(o.optJSONObject("initRange")),
             indexRange = byteRange(o.optJSONObject("indexRange")),
+            audioTrackId = track?.optString("id")?.takeIf { it.isNotBlank() },
+            audioTrackName = track?.optString("displayName")?.takeIf { it.isNotBlank() },
+            audioIsDefault = track?.optBoolean("audioIsDefault") ?: false,
+            // On dubbed videos audioLanguage is absent and the tag lives in the track
+            // id's prefix: "bn.3" -> "bn", "zh-Hans.3" -> "zh-Hans".
+            audioLanguage = o.optString("audioLanguage").takeIf { it.isNotBlank() }
+                ?: track?.optString("id")?.substringBefore('.')?.takeIf { it.isNotBlank() },
             hasVideo = codecs.any { c -> c.isCodec(VIDEO_CODECS) },
             hasAudio = codecs.any { c -> c.isCodec(AUDIO_CODECS) },
         )

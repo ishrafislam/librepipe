@@ -90,15 +90,15 @@ class WatchViewModel(
             }
             resolved.exceptionOrNull()?.let { error = it.toAppError() }
             premiereAt = resolved.getOrNull()?.premiereAt
+            // Reuse the info the session already fetched. A second Extractor.stream()
+            // could fail independently, and a null `info` silently disables the whole
+            // options menu and every rebuild.
+            resolved.getOrNull()?.streamInfo?.let { adopt(it) }
             connect()
         }
         viewModelScope.launch {
-            runCatching { Extractor.stream(initialRef.url) }.getOrNull()?.let { stream ->
-                info = stream
-                availableHeights = Playback.availableHeights(stream)
-                val settings = container.settings.snapshot()
-                captionsOn = settings.captionsEnabled
-                applyCaptions(settings.captionsEnabled)
+            if (info == null) {
+                runCatching { Extractor.stream(initialRef.url) }.getOrNull()?.let { adopt(it) }
             }
         }
         viewModelScope.launch {
@@ -119,6 +119,17 @@ class WatchViewModel(
                 val url = channelUrl()
                 subscribed = url != null && subs.any { it.channelUrl == url }
             }
+        }
+    }
+
+    private fun adopt(stream: StreamInfo) {
+        if (info != null) return
+        info = stream
+        availableHeights = Playback.availableHeights(stream)
+        viewModelScope.launch {
+            val settings = container.settings.snapshot()
+            captionsOn = settings.captionsEnabled
+            applyCaptions(settings.captionsEnabled)
         }
     }
 
@@ -143,15 +154,13 @@ class WatchViewModel(
     }
 
     /**
-     * Caps the video track height. With a DASH manifest this is pure track selection —
-     * instant, keeps position, no reload.
+     * Rebuilds at [height]. Track selection over a `MediaController` is unreliable —
+     * the `TrackGroup` it hands back is a deserialized copy — so the cap is baked into
+     * a fresh manifest instead. Costs a short rebuffer, but actually switches.
      */
     fun setQuality(height: Int) {
-        val c = controller ?: return
-        c.trackSelectionParameters = c.trackSelectionParameters.buildUpon()
-            .setMaxVideoSize(Int.MAX_VALUE, height)
-            .build()
         viewModelScope.launch { container.settings.setMaxQuality(height) }
+        rebuild(height)
     }
 
     /**
@@ -176,7 +185,36 @@ class WatchViewModel(
             c.setMediaItem(item, position)
             c.prepare()
             if (wasPlaying) c.play()
-            availableHeights = emptyList()
+            // Progressive still has a real height; blanking the list would leave the
+            // Quality row permanently disabled rather than merely limited.
+            availableHeights = Playback.availableHeights(stream)
+            currentHeight = Playback.selectStreams(stream, audioOnly, 0, forceProgressive = true).height
+
+            applyCaptions(captionsOn)
+        }
+    }
+
+    /**
+     * Reloads the current video at the same position with a new quality and/or audio
+     * track. Always retries the manifest: an earlier fallback may have been a transient
+     * network blip, and leaving it latched would permanently strand the user on 360p
+     * with no dub switching. If the manifest really is unusable the fallback re-fires.
+     */
+    private fun rebuild(height: Int) {
+        val c = controller ?: return
+        val stream = info ?: return
+        fellBackToProgressive = false
+        viewModelScope.launch {
+            val position = c.currentPosition
+            val wasPlaying = c.isPlaying
+            val settings = container.settings.snapshot()
+            val audioOnly = settings.audioOnly || ref.isAudio
+            val item = Playback.buildItem(stream, ref, audioOnly, height, exactHeight = true)
+            c.setMediaItem(item, position)
+            c.prepare()
+            if (wasPlaying) c.play()
+            availableHeights = Playback.availableHeights(stream)
+            currentHeight = height
             applyCaptions(captionsOn)
         }
     }
@@ -241,10 +279,13 @@ class WatchViewModel(
             override fun onEvents(player: Player, events: Player.Events) = refresh(player)
 
             override fun onPlayerError(e: androidx.media3.common.PlaybackException) {
-                if (e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
-                    e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED ||
-                    e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED
-                ) {
+                // Only the failures the fallback exists for. ERROR_CODE_IO_UNSPECIFIED
+                // is the generic IO bucket, so treating it as "the manifest is unusable"
+                // let one dropped connection strand the session on 360p for good.
+                val manifestUnusable =
+                    e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                        e.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED
+                if (manifestUnusable && !fellBackToProgressive) {
                     fallbackToProgressive()
                 } else {
                     error = AppError(code = "PLAYBACK", message = e.message ?: "Playback failed")
