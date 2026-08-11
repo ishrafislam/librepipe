@@ -81,11 +81,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             runCatching {
                                 val channel = Extractor.channel(sub.channelUrl)
                                 channel.loadInitial()
-                                // Channel-tab items carry no avatar of their own, so take it
-                                // from the header (falling back to the stored subscription).
-                                val avatar = channel.channel.avatarUrl ?: sub.avatarUrl
+                                // ChannelFeed already stamps the owner; the stored
+                                // subscription only backfills a header we failed to parse.
                                 channel.videos.take(6).map {
-                                    it.copy(uploaderAvatarUrl = it.uploaderAvatarUrl ?: avatar)
+                                    it.copy(uploaderAvatarUrl = it.uploaderAvatarUrl ?: sub.avatarUrl)
                                 }
                             }.getOrNull()
                         }

@@ -28,6 +28,7 @@ class MiniPlayerViewModel(private val container: AppContainer) : ViewModel() {
         val channelName: String? = null,
         val thumbnailUrl: String? = null,
         val progress: Float = 0f,
+        val isPlaying: Boolean = false,
         val visible: Boolean = false,
     )
 
@@ -53,6 +54,13 @@ class MiniPlayerViewModel(private val container: AppContainer) : ViewModel() {
                 refresh(c)
             }
         }
+    }
+
+    /** Refreshes straight after toggling so the icon flips without waiting for the poll. */
+    fun playPause() {
+        val c = controller ?: return
+        if (c.isPlaying) c.pause() else c.play()
+        refresh(c)
     }
 
     /** Stops playback and clears the session so the mini player disappears. */
@@ -88,6 +96,7 @@ class MiniPlayerViewModel(private val container: AppContainer) : ViewModel() {
                 channelName = item.mediaMetadata.artist?.toString() ?: ref?.uploaderName,
                 thumbnailUrl = item.mediaMetadata.artworkUri?.toString() ?: ref?.thumbnailUrl,
                 progress = progress,
+                isPlaying = player.isPlaying,
                 visible = true,
             )
         }

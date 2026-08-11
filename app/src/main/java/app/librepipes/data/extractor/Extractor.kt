@@ -168,9 +168,20 @@ object Extractor {
         init {
             val seen = HashSet<String>()
             for (video in initialVideos) {
-                if (seen.add(video.id)) videos += video
+                if (seen.add(video.id)) videos += video.withChannel()
             }
         }
+
+        /**
+         * A channel page omits the owner from every item — it is implicit there — so the
+         * parsed refs carry no uploader name, url or avatar. Stamp them from the header
+         * once, here, and every consumer of a channel feed gets complete refs.
+         */
+        private fun StreamRef.withChannel(): StreamRef = copy(
+            uploaderName = uploaderName?.takeIf { it.isNotBlank() } ?: channel.name,
+            uploaderUrl = uploaderUrl?.takeIf { it.isNotBlank() } ?: channel.url,
+            uploaderAvatarUrl = uploaderAvatarUrl ?: channel.avatarUrl,
+        )
 
         /** Kept for API compatibility; initial page loads eagerly in [Extractor.channel]. */
         suspend fun loadInitial() = Unit
@@ -186,7 +197,9 @@ object Extractor {
             val seen = videos.mapTo(HashSet()) { it.id }
             for (r in Parsers.findAll(page, "lockupViewModel")) {
                 if (r.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
-                    Parsers.parseLockupVideo(r)?.let { v -> if (seen.add(v.id)) videos += v }
+                    Parsers.parseLockupVideo(r)?.let { v ->
+                        if (seen.add(v.id)) videos += v.withChannel()
+                    }
                 }
             }
             nextToken = Parsers.continuationToken(page)

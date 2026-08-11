@@ -426,6 +426,8 @@ private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
         thumbnailUrl = state.thumbnailUrl,
         progress = state.progress,
         onClick = { onOpen(ref) },
+        isPlaying = state.isPlaying,
+        onPlayPause = vm::playPause,
         onClose = vm::stop,
     )
 }

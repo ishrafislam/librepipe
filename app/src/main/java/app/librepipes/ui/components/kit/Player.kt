@@ -18,7 +18,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,6 +49,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.ui.theme.ShapeTokens
+import app.librepipes.ui.theme.Spacing
 import coil3.compose.AsyncImage
 
 /**
@@ -137,7 +144,11 @@ fun LpSeekBar(
     }
 }
 
-/** 72dp mini player: surfaceContainer, 96x54 thumb (radius 8), 2dp progress on the bottom edge. */
+/**
+ * Floating 72dp mini player: rounded surfaceContainerHigh card inset from the screen
+ * edges, 96x54 thumb (radius 8), play/pause + close, 2dp progress along the card's
+ * bottom edge.
+ */
 @Composable
 fun LpMiniPlayer(
     title: String,
@@ -146,34 +157,44 @@ fun LpMiniPlayer(
     progress: Float,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    isPlaying: Boolean = false,
+    onPlayPause: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
+    // Room for however many trailing buttons are actually shown, so long titles
+    // ellipsize instead of sliding under them.
+    val trailingWidth = 8.dp + 40.dp * listOfNotNull(onPlayPause, onClose).size
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = Spacing.space3, vertical = Spacing.space2)
             .height(72.dp)
-            .background(colors.surfaceContainer)
+            // clip before background, or the background paints square corners underneath.
+            .clip(ShapeTokens.md)
+            .background(colors.surfaceContainerHigh)
             .clickable(onClick = onClick),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(70.dp),
+            modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
                 model = thumbnailUrl,
                 contentDescription = null,
                 modifier = Modifier
-                    .padding(start = 16.dp)
+                    .padding(start = 8.dp)
                     .width(96.dp)
                     .aspectRatio(16f / 9f)
                     .clip(RoundedCornerShape(8.dp)),
                 contentScale = ContentScale.Crop,
             )
             Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = trailingWidth),
+            ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleSmall,
@@ -186,17 +207,41 @@ fun LpMiniPlayer(
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
         }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (onPlayPause != null) {
+                MiniPlayerAction(
+                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    onClick = onPlayPause,
+                )
+            }
+            if (onClose != null) {
+                MiniPlayerAction(
+                    icon = Icons.Rounded.Close,
+                    contentDescription = "Close",
+                    onClick = onClose,
+                )
+            }
+        }
+
         val track = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) Color(0xFF42474E) else Color(0xFF9CCBFA)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(2.dp)
-                .background(colors.surfaceContainerHigh),
+                .background(colors.surfaceContainer),
         ) {
             Box(
                 modifier = Modifier
@@ -205,21 +250,25 @@ fun LpMiniPlayer(
                     .background(track),
             )
         }
-        if (onClose != null) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 8.dp)
-                    .size(32.dp)
-                    .clip(ShapeTokens.full)
-                    .background(colors.surfaceContainerHigh)
-                    .clickable(onClick = onClose),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "\u00D7", color = colors.onSurface, style = MaterialTheme.typography.titleMedium)
-            }
-        }
     }
+}
+
+@Composable
+private fun MiniPlayerAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Icon(
+        imageVector = icon,
+        contentDescription = contentDescription,
+        tint = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier
+            .size(40.dp)
+            .clip(ShapeTokens.full)
+            .clickable(onClick = onClick)
+            .padding(9.dp),
+    )
 }
 
 /** Status pill on artwork: white 8% background, LIVE = brand red text. */
