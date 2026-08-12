@@ -93,9 +93,10 @@ fun LpVideoCard(
                     text = "LIVE",
                     color = colors.error,
                     style = LpBadgeStyle.Small,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
                 )
-            } else if (ref.duration > 0) {
+            }
+            if (ref.duration > 0) {
                 LpDurationBadge(
                     text = Format.durationSeconds(ref.duration),
                     style = LpBadgeStyle.Small,
@@ -201,6 +202,14 @@ fun LpVideoRow(
                     .clip(ShapeTokens.md),
                 contentScale = ContentScale.Crop,
             )
+            if (ref.isLive) {
+                LpDurationBadge(
+                    text = "LIVE",
+                    color = colors.error,
+                    style = LpBadgeStyle.Tiny,
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                )
+            }
             if (ref.duration > 0) {
                 LpDurationBadge(
                     text = Format.durationSeconds(ref.duration),

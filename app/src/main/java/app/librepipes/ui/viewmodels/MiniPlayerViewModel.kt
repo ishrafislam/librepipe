@@ -28,6 +28,7 @@ class MiniPlayerViewModel(private val container: AppContainer) : ViewModel() {
         val channelName: String? = null,
         val thumbnailUrl: String? = null,
         val progress: Float = 0f,
+        val isLive: Boolean = false,
         val isPlaying: Boolean = false,
         val visible: Boolean = false,
     )
@@ -83,8 +84,12 @@ class MiniPlayerViewModel(private val container: AppContainer) : ViewModel() {
         }
         val ref = item.mediaMetadata.extras?.getString(Playback.EXTRA_REF_JSON)
             ?.let { StreamRef.fromJson(it) }
+        // The timeline window is authoritative: a live HLS stream with a DVR window
+        // reports a real duration, so a position/duration fraction would draw a
+        // timeline nobody can scrub. `ref` covers deep links that never carried the flag.
+        val live = player.isCurrentMediaItemLive || ref?.isLive == true
         val duration = player.duration
-        val progress = if (duration > 0) {
+        val progress = if (!live && duration > 0) {
             (player.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
         } else {
             0f
@@ -96,6 +101,7 @@ class MiniPlayerViewModel(private val container: AppContainer) : ViewModel() {
                 channelName = item.mediaMetadata.artist?.toString() ?: ref?.uploaderName,
                 thumbnailUrl = item.mediaMetadata.artworkUri?.toString() ?: ref?.thumbnailUrl,
                 progress = progress,
+                isLive = live,
                 isPlaying = player.isPlaying,
                 visible = true,
             )

@@ -76,6 +76,12 @@ object PlaybackOpener {
                 controller.play()
                 return resolved
             }
+            // Disable the renderers first so the video codec is released. Swapping items
+            // on a playing player let it carry a codec configured for the previous stream
+            // into the next one — visible as torn macroblocks for the first seconds when
+            // moving from a DASH video to a live HLS stream.
+            controller.stop()
+            controller.clearMediaItems()
             controller.setMediaItems(resolved.items, resolved.startIndex, resolved.startPosition)
             controller.prepare()
             controller.play()

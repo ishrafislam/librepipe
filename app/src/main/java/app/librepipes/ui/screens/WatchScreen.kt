@@ -241,6 +241,10 @@ private fun VideoSurface(vm: WatchViewModel, modifier: Modifier = Modifier) {
             // but pushes the top and bottom of the frame off it.
             view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         },
+        // Watch -> watch composes the next PlayerView before disposing this one, so
+        // without this both stay bound to the same player and a dying surface can race
+        // the live one.
+        onRelease = { it.player = null },
     )
 }
 
@@ -286,24 +290,30 @@ private fun PlayerOverlay(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.space8),
         ) {
-            OverlayIcon(
-                icon = Icons.Rounded.SkipPrevious,
-                contentDescription = "Previous",
-                enabled = vm.hasPrev,
-                onClick = { onInteract(); vm.prev() },
-            )
+            // A live broadcast has no queue position to step through, whatever else the
+            // session happens to be holding.
+            if (!vm.isLive) {
+                OverlayIcon(
+                    icon = Icons.Rounded.SkipPrevious,
+                    contentDescription = "Previous",
+                    enabled = vm.hasPrev,
+                    onClick = { onInteract(); vm.prev() },
+                )
+            }
             OverlayIcon(
                 icon = if (vm.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = if (vm.isPlaying) "Pause" else "Play",
                 size = 64.dp,
                 onClick = { onInteract(); vm.playPause() },
             )
-            OverlayIcon(
-                icon = Icons.Rounded.SkipNext,
-                contentDescription = "Next",
-                enabled = vm.hasNext,
-                onClick = { onInteract(); vm.next() },
-            )
+            if (!vm.isLive) {
+                OverlayIcon(
+                    icon = Icons.Rounded.SkipNext,
+                    contentDescription = "Next",
+                    enabled = vm.hasNext,
+                    onClick = { onInteract(); vm.next() },
+                )
+            }
         }
 
         Column(
@@ -312,23 +322,31 @@ private fun PlayerOverlay(
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "${Format.time(vm.position)} / ${Format.time(vm.duration)}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White,
-                    modifier = Modifier.weight(1f),
-                )
+                if (vm.isLive) {
+                    LiveIndicator(modifier = Modifier.weight(1f))
+                } else {
+                    Text(
+                        text = "${Format.time(vm.position)} / ${Format.time(vm.duration)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 OverlayIcon(
                     icon = if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
                     contentDescription = if (fullscreen) "Exit fullscreen" else "Fullscreen",
                     onClick = { onInteract(); onToggleFullscreen() },
                 )
             }
-            LpSeekBar(
-                progress = if (vm.duration > 0) vm.position.toFloat() / vm.duration else 0f,
-                onSeek = { onInteract(); vm.seekTo(it) },
-                chapters = vm.chapters,
-            )
+            // A live stream has no timeline to scrub, so the bar would sit pinned at zero
+            // and invite a seek that cannot happen.
+            if (!vm.isLive) {
+                LpSeekBar(
+                    progress = if (vm.duration > 0) vm.position.toFloat() / vm.duration else 0f,
+                    onSeek = { onInteract(); vm.seekTo(it) },
+                    chapters = vm.chapters,
+                )
+            }
         }
     }
 }
@@ -365,27 +383,32 @@ private fun PlayerOptionsSheet(
             Column(modifier = Modifier.fillMaxWidth()) {
                 when (current) {
                     OptionsPage.MENU -> {
-                        OptionRow(
-                            label = "Quality",
-                            value = vm.currentHeight.takeIf { it > 0 }?.let { "${it}p" },
-                            enabled = vm.availableHeights.isNotEmpty(),
-                            onClick = { page = OptionsPage.QUALITY },
-                        )
-                        OptionRow(
-                            label = "Playback speed",
-                            value = speedLabel(vm.playbackSpeed),
-                            onClick = { page = OptionsPage.SPEED },
-                        )
-                        OptionRow(
-                            label = "Captions",
-                            onClick = { vm.toggleCaptions() },
-                            trailing = {
-                                LpSwitch(
-                                    checked = vm.captionsOn,
-                                    onCheckedChange = { vm.toggleCaptions() },
-                                )
-                            },
-                        )
+                        // None of these do anything on a live stream: no quality ladder
+                        // is exposed for the HLS playlist, live responses carry no caption
+                        // tracks, and speed at the live edge only stalls or drifts.
+                        if (!vm.isLive) {
+                            OptionRow(
+                                label = "Quality",
+                                value = vm.currentHeight.takeIf { it > 0 }?.let { "${it}p" },
+                                enabled = vm.availableHeights.isNotEmpty(),
+                                onClick = { page = OptionsPage.QUALITY },
+                            )
+                            OptionRow(
+                                label = "Playback speed",
+                                value = speedLabel(vm.playbackSpeed),
+                                onClick = { page = OptionsPage.SPEED },
+                            )
+                            OptionRow(
+                                label = "Captions",
+                                onClick = { vm.toggleCaptions() },
+                                trailing = {
+                                    LpSwitch(
+                                        checked = vm.captionsOn,
+                                        onCheckedChange = { vm.toggleCaptions() },
+                                    )
+                                },
+                            )
+                        }
                         OptionRow(label = "Lock screen", onClick = onLock)
                     }
 
@@ -479,6 +502,28 @@ private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
 
 private fun speedLabel(value: Float): String =
     if (value == value.toInt().toFloat()) "${value.toInt()}.0x" else "${value}x"
+
+/** Red dot + LIVE, standing in for the timestamp on a live stream. */
+@Composable
+private fun LiveIndicator(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFFF4B3E)),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "LIVE",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White,
+        )
+    }
+}
 
 @Composable
 private fun OverlayIcon(

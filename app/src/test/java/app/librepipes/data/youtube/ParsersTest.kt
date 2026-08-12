@@ -397,4 +397,24 @@ class ParsersTest {
         val info = Parsers.parseStreamInfo(playerResponse("OK"), "VID1")
         assertNull(info.premiereAt)
     }
+
+    @Test
+    fun streamInfo_finishedLiveStreamIsNotLive() {
+        // YouTube keeps isLiveContent set on the VOD of a stream that has ended; only
+        // isLive means "live right now".
+        val ended = playerResponse("OK")
+        ended.getJSONObject("videoDetails")
+            .put("isLiveContent", true)
+            .put("isLive", false)
+        assertEquals(StreamType.NORMAL, Parsers.parseStreamInfo(ended, "VID1").streamType)
+    }
+
+    @Test
+    fun streamInfo_liveNowIsLive() {
+        val live = playerResponse("OK")
+        live.getJSONObject("videoDetails")
+            .put("isLiveContent", true)
+            .put("isLive", true)
+        assertEquals(StreamType.LIVE, Parsers.parseStreamInfo(live, "VID1").streamType)
+    }
 }

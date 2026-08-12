@@ -78,6 +78,13 @@ class WatchViewModel(
     var captionsOn by mutableStateOf(false)
         private set
 
+    /**
+     * `info` is authoritative once the player response lands; `ref` covers the gap before
+     * it does, and deep links that never carried the flag. Gate live UI on this rather
+     * than on a zero duration — a live stream with a DVR window reports a real one.
+     */
+    val isLive: Boolean get() = info?.isLive ?: ref.isLive
+
     private var controller: MediaController? = null
     private var chapterSeconds: List<Long> = emptyList()
     /** Set once we've dropped to the progressive stream, so a retry can't loop. */

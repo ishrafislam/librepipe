@@ -572,7 +572,10 @@ object Parsers {
             }
         }
         val id = details.optString("videoId").ifBlank { videoId }
-        val isLive = details.optBoolean("isLiveContent") || details.optBoolean("isLive")
+        // `isLiveContent` is set on anything that was ever streamed live, finished VODs
+        // included, so it cannot stand in for "live right now" — using it stripped the
+        // seek bar, subtitles and quality menu from every past live stream.
+        val isLive = details.optBoolean("isLive")
         val streaming = root.optJSONObject("streamingData")
 
         val progressive = mutableListOf<StreamFormat>()

@@ -158,13 +158,15 @@ fun LpMiniPlayer(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     isPlaying: Boolean = false,
+    isLive: Boolean = false,
     onPlayPause: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     // Room for however many trailing buttons are actually shown, so long titles
-    // ellipsize instead of sliding under them.
-    val trailingWidth = 8.dp + 40.dp * listOfNotNull(onPlayPause, onClose).size
+    // ellipsize instead of sliding under them. The LIVE badge shares that row.
+    val trailingWidth = 8.dp + 40.dp * listOfNotNull(onPlayPause, onClose).size +
+        if (isLive) 44.dp else 0.dp
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -219,6 +221,14 @@ fun LpMiniPlayer(
                 .padding(end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (isLive) {
+                LpDurationBadge(
+                    text = "LIVE",
+                    color = colors.error,
+                    style = LpBadgeStyle.Tiny,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
             if (onPlayPause != null) {
                 MiniPlayerAction(
                     icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
@@ -235,20 +245,23 @@ fun LpMiniPlayer(
             }
         }
 
-        val track = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) Color(0xFF42474E) else Color(0xFF9CCBFA)
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(colors.surfaceContainer),
-        ) {
+        // Live has no timeline to show; an empty rail still reads as a stalled one.
+        if (!isLive) {
+            val track = if (MaterialTheme.colorScheme.background.luminance() > 0.5f) Color(0xFF42474E) else Color(0xFF9CCBFA)
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
                     .height(2.dp)
-                    .background(track),
-            )
+                    .background(colors.surfaceContainer),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .height(2.dp)
+                        .background(track),
+                )
+            }
         }
     }
 }
