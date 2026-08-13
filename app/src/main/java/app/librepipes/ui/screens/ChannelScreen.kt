@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -220,6 +219,7 @@ private fun ChannelHeader(
 ) {
     val colors = MaterialTheme.colorScheme
     var descriptionExpanded by remember { mutableStateOf(false) }
+    var descriptionOverflows by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -253,12 +253,6 @@ private fun ChannelHeader(
                     contentDescription = "Search",
                     tint = Color.White,
                     onClick = onOpenSearch,
-                )
-                LpIconButton(
-                    icon = Icons.Rounded.MoreVert,
-                    contentDescription = null,
-                    tint = Color.White,
-                    onClick = {},
                 )
             }
             // Inside the banner Box and overflowing it, so the overlap costs no layout
@@ -297,18 +291,25 @@ private fun ChannelHeader(
                         text = channel.description,
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant,
-                        maxLines = if (descriptionExpanded) Int.MAX_VALUE else 3,
+                        maxLines = if (descriptionExpanded) Int.MAX_VALUE else 2,
                         overflow = TextOverflow.Ellipsis,
+                        // Only the collapsed pass can overflow; letting the expanded one
+                        // write here would clear the flag and strip the "less" link away.
+                        onTextLayout = { result ->
+                            if (!descriptionExpanded) descriptionOverflows = result.hasVisualOverflow
+                        },
                         modifier = Modifier.padding(top = 12.dp),
                     )
-                    Text(
-                        text = if (descriptionExpanded) "less" else "more",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.primary,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .clickable { descriptionExpanded = !descriptionExpanded },
-                    )
+                    if (descriptionOverflows) {
+                        Text(
+                            text = if (descriptionExpanded) "less" else "more",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.primary,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .clickable { descriptionExpanded = !descriptionExpanded },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
                 if (subscribed) {
