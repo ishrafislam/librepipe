@@ -338,8 +338,13 @@ private fun ResultsSection(
         )
 
         else -> {
+            // A channel result is usually what the query meant, so lead with it.
+            // sortedBy is stable, leaving videos and playlists in server order.
+            val ordered = remember(items) {
+                items.sortedBy { it !is Extractor.SearchItem.Channel }
+            }
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(items, key = { it.key() }) { item ->
+                items(ordered, key = { it.key() }) { item ->
                     when (item) {
                         is Extractor.SearchItem.Video -> LpVideoRow(
                             ref = item.stream,
@@ -361,12 +366,6 @@ private fun ResultsSection(
                                 trailingFilled = !subscribed,
                                 onTrailingClick = { vm.toggleSubscribe(item.channel) },
                                 modifier = Modifier.padding(horizontal = 12.dp),
-                            )
-                            HorizontalDivider(
-                                modifier = Modifier.padding(
-                                    horizontal = Spacing.space4,
-                                    vertical = 8.dp,
-                                ),
                             )
                         }
 

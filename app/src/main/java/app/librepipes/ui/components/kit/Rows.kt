@@ -312,7 +312,9 @@ fun LpChannelRow(
                     modifier = trailingModifier,
                 )
             } else {
-                LpPillButton(
+                // Same 40dp/labelLarge geometry as the filled state, so toggling
+                // subscribe changes the fill and nothing else.
+                LpOutlinedButton(
                     text = trailingLabel,
                     onClick = onTrailingClick ?: {},
                     modifier = trailingModifier,
