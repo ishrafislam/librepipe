@@ -305,18 +305,31 @@ object Parsers {
         val playlistId = o.optString("contentId").takeIf { it.isNotBlank() } ?: return null
         val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
         val rows = metadataRows(meta)
+        val contentImage = o.optJSONObject("contentImage")
+        // A channel's playlists tab stacks the covers: the image sits one level deeper
+        // and the item count only appears as an overlay badge ("5 episodes"), never in
+        // the metadata rows a search result carries.
+        val image = contentImage?.optJSONObject("thumbnailViewModel")?.optJSONObject("image")
+            ?: contentImage?.optJSONObject("collectionThumbnailViewModel")
+                ?.optJSONObject("primaryThumbnail")
+                ?.optJSONObject("thumbnailViewModel")
+                ?.optJSONObject("image")
+        val badgeCount = contentImage
+            ?.let { findAll(it, "thumbnailBadgeViewModel") }
+            ?.firstNotNullOfOrNull { badge ->
+                val text = badge.optString("text")
+                parseViewCount(text).takeIf { it > 0 && Regex("\\d").containsMatchIn(text) }
+            }
         return PlaylistRef(
             id = playlistId,
             name = runsText(meta.optJSONObject("title")) ?: playlistId,
             url = playlistUrl(playlistId),
-            thumbnailUrl = sourcesBest(
-                o.optJSONObject("contentImage")?.optJSONObject("thumbnailViewModel")?.optJSONObject("image"),
-            ),
+            thumbnailUrl = sourcesBest(image),
             uploaderName = rows.firstOrNull { isOwnerText(it) },
             streamCount = rows.firstNotNullOfOrNull {
                 val n = parseViewCount(it)
                 if (n > 0 && Regex("\\d").containsMatchIn(it)) n else null
-            } ?: 0L,
+            } ?: badgeCount ?: 0L,
         )
     }
 
@@ -369,6 +382,7 @@ object Parsers {
         val name: String
         val parts = mutableListOf<String>()
         val avatar: JSONObject?
+        val banner: JSONObject?
         val description: String?
 
         if (classic != null) {
@@ -376,7 +390,9 @@ object Parsers {
                 ?: classic.optString("title").takeIf { it.isNotBlank() }
                 ?: return null
             runsText(classic.optJSONObject("subscriberCountText"))?.let(parts::add)
+            runsText(classic.optJSONObject("videosCountText"))?.let(parts::add)
             avatar = classic.optJSONObject("avatar")
+            banner = classic.optJSONObject("banner")
             description = runsText(classic.optJSONObject("description"))
         } else {
             val viewModel = pageHeader.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
@@ -398,6 +414,9 @@ object Parsers {
                 ?.optJSONObject("decoratedAvatarViewModel")
                 ?.optJSONObject("avatar")
                 ?.optJSONObject("avatarViewModel")
+                ?.optJSONObject("image")
+            banner = viewModel?.optJSONObject("banner")
+                ?.optJSONObject("imageBannerViewModel")
                 ?.optJSONObject("image")
             description = runsText(
                 viewModel?.optJSONObject("description")
@@ -427,8 +446,12 @@ object Parsers {
             name = name,
             url = channelUrl(id),
             avatarUrl = sourcesBest(avatar),
+            bannerUrl = sourcesBest(banner),
             subscriberCount = parts.firstNotNullOfOrNull {
                 parseCompactCount(it).takeIf { n -> n > 0 && "subscriber" in it }
+            } ?: 0L,
+            videoCount = parts.firstNotNullOfOrNull {
+                parseCompactCount(it).takeIf { n -> n > 0 && "video" in it }
             } ?: 0L,
             description = description,
         )

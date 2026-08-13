@@ -160,10 +160,17 @@ object Extractor {
         private var nextToken: String?,
         val channel: ChannelRef,
         initialVideos: List<StreamRef>,
+        private val browseId: String? = null,
+        private val playlistsParams: String? = null,
     ) {
         val videos = mutableListOf<StreamRef>()
         var hasMore = true
             private set
+
+        /** False when the channel exposes no playlists tab, so the UI can drop it. */
+        val hasPlaylists: Boolean get() = browseId != null && playlistsParams != null
+
+        private var playlistsCache: List<PlaylistRef>? = null
 
         init {
             val seen = HashSet<String>()
@@ -191,6 +198,27 @@ object Extractor {
             val page = client.browse(null, null, token)
             consume(page)
             true
+        }
+
+        /**
+         * The playlists tab, fetched on demand — most visits never open it. Cached, so
+         * switching tabs back and forth costs one request in total.
+         */
+        suspend fun loadPlaylists(): List<PlaylistRef> = withContext(Dispatchers.IO) {
+            playlistsCache?.let { return@withContext it }
+            val id = browseId
+            val params = playlistsParams
+            if (id == null || params == null) return@withContext emptyList()
+            val page = client.browse(id, params, null)
+            val seen = HashSet<String>()
+            val playlists = buildList {
+                for (r in Parsers.findAll(page, "lockupViewModel")) {
+                    if (r.optString("contentType") != "LOCKUP_CONTENT_TYPE_PLAYLIST") continue
+                    Parsers.parseLockupPlaylist(r)?.let { if (seen.add(it.id)) add(it) }
+                }
+            }
+            playlistsCache = playlists
+            playlists
         }
 
         private fun consume(page: JSONObject) {
@@ -225,7 +253,15 @@ object Extractor {
                 }
             }
         }
-        ChannelFeed(c, videosPage?.let { Parsers.continuationToken(it) }, channel, videos)
+        val playlistsTab = tabs.firstOrNull { it.first.contains("playlist", ignoreCase = true) }
+        ChannelFeed(
+            c,
+            videosPage?.let { Parsers.continuationToken(it) },
+            channel,
+            videos,
+            browseId,
+            playlistsTab?.second,
+        )
     }
 
     // ------------------------------------------------------------------ Playlists

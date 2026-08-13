@@ -71,6 +71,8 @@ data class ChannelRef(
     /** "@handle", when the source provides one. Display only. */
     val handle: String? = null,
     val subscriberCount: Long = 0L,
+    /** Display only — deliberately not persisted with the subscription. */
+    val videoCount: Long = 0L,
     val description: String? = null,
 )
 

@@ -178,8 +178,10 @@ class ParsersTest {
         assertEquals("UCP7uiEZIqci43m22KDl0sNw", channel.id)
         assertEquals("Kotlin by JetBrains", channel.name)
         assertEquals(99_800L, channel.subscriberCount)
+        assertEquals(717L, channel.videoCount)
         assertTrue(channel.description.orEmpty().contains("Concise"))
         assertNotNull(channel.avatarUrl)
+        assertNotNull(channel.bannerUrl)
 
         val tabs = Parsers.channelTabs(page)
         assertTrue(tabs.any { it.first == "Videos" })

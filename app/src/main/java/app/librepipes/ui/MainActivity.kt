@@ -536,6 +536,8 @@ private fun AppNavHost(
                 vm = appViewModel { ChannelViewModel(it, url) },
                 onBack = { navController.popBackStack() },
                 onOpenVideo = openVideo,
+                onOpenSearch = openSearch,
+                onOpenPlaylist = openPlaylist,
             )
         }
         composable(

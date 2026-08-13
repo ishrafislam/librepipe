@@ -252,6 +252,13 @@ class ChannelViewModel(
         private set
     var subscribed by mutableStateOf(false)
         private set
+    var playlists by mutableStateOf<List<PlaylistRef>>(emptyList())
+        private set
+    var playlistsLoading by mutableStateOf(false)
+        private set
+    /** Whether the channel offers a playlists tab at all. */
+    var hasPlaylists by mutableStateOf(false)
+        private set
 
     private var feed: Extractor.ChannelFeed? = null
 
@@ -274,6 +281,7 @@ class ChannelViewModel(
                 feed = f
                 channel = f.channel
                 videos = f.videos.toList()
+                hasPlaylists = f.hasPlaylists
             } catch (e: Exception) {
                 error = e.toAppError()
             } finally {
@@ -290,6 +298,17 @@ class ChannelViewModel(
             val ok = runCatching { f.loadMore() }.getOrDefault(false)
             if (ok) videos = f.videos.toList()
             loadingMore = false
+        }
+    }
+
+    /** Called the first time the playlists tab is opened; the feed caches the result. */
+    fun loadPlaylists() {
+        val f = feed ?: return
+        if (playlistsLoading || playlists.isNotEmpty()) return
+        viewModelScope.launch {
+            playlistsLoading = true
+            playlists = runCatching { f.loadPlaylists() }.getOrDefault(emptyList())
+            playlistsLoading = false
         }
     }
 

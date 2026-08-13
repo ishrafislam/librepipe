@@ -185,6 +185,8 @@ fun LpVideoRow(
     progress: Float? = null,
     /** Trailing overflow glyph. Decorative today — it carries no click handler. */
     showMenu: Boolean = true,
+    /** Off on a channel page, where every row has the same owner. */
+    showChannel: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -226,7 +228,7 @@ fun LpVideoRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!ref.uploaderName.isNullOrBlank()) {
+            if (showChannel && !ref.uploaderName.isNullOrBlank()) {
                 Text(
                     text = ref.uploaderName,
                     style = MaterialTheme.typography.bodySmall,
