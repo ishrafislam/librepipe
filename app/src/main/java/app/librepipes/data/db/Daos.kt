@@ -104,6 +104,9 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<LocalPlaylistEntity>>
 
+    @Query("SELECT * FROM playlists WHERE name = :name LIMIT 1")
+    suspend fun findByName(name: String): LocalPlaylistEntity?
+
     @Insert
     suspend fun insert(playlist: LocalPlaylistEntity): Long
 

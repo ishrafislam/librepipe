@@ -34,6 +34,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpIconAction
 import app.librepipes.ui.components.kit.LpListSkeleton
@@ -50,9 +52,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 fun PlaylistScreen(
     vm: PlaylistViewModel,
     onBack: () -> Unit,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
     val playlist = vm.playlist
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
     val videos = vm.videos
     val loading = vm.loading
     val loadingMore = vm.loadingMore
@@ -88,7 +92,7 @@ fun PlaylistScreen(
                                     .aspectRatio(16f / 9f)
                                     .clickable(
                                         enabled = videos.isNotEmpty(),
-                                        onClick = { onOpenVideo(videos.first(), videos) },
+                                        onClick = { onOpenVideo(videos.first()) },
                                     ),
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -131,10 +135,10 @@ fun PlaylistScreen(
                     }
                 }
                 items(videos, key = { it.id }) { video ->
-                    val index = videos.indexOf(video)
                     LpVideoRow(
                         ref = video,
-                        onClick = { onOpenVideo(video, videos.drop(index)) },
+                        onClick = { onOpenVideo(video) },
+                        onMenuClick = { videoMenu.open(video) },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }

@@ -46,6 +46,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.ChannelRef
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpFilledButton
@@ -68,7 +70,7 @@ private const val TAB_ABOUT = 2
 fun ChannelScreen(
     vm: ChannelViewModel,
     onBack: () -> Unit,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenPlaylist: (String) -> Unit,
 ) {
@@ -79,6 +81,8 @@ fun ChannelScreen(
     val error = vm.error
     val subscribed = vm.subscribed
     var tab by remember { mutableIntStateOf(TAB_VIDEOS) }
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
 
     val listState = rememberLazyListState()
 
@@ -154,8 +158,8 @@ fun ChannelScreen(
                             items(videos, key = { it.id }) { video ->
                                 LpVideoRow(
                                     ref = video,
-                                    onClick = { onOpenVideo(video, videos) },
-                                    showMenu = false,
+                                    onClick = { onOpenVideo(video) },
+                                    onMenuClick = { videoMenu.open(video) },
                                     showChannel = false,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 )

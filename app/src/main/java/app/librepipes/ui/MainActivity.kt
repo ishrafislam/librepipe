@@ -40,7 +40,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -280,8 +282,10 @@ private fun MainScreen(
         }
     }
 
-    val openVideo: (StreamRef, List<StreamRef>) -> Unit = { ref, queue ->
-        WatchRequest.set(ref, queue)
+    // One video, never its neighbours: the queue is only what the user adds from a
+    // list's overflow menu.
+    val openVideo: (StreamRef) -> Unit = { ref ->
+        WatchRequest.set(ref, emptyList())
         navController.navigate(Routes.watch(ref.url))
     }
     val openChannel: (String) -> Unit = { url -> navController.navigate(Routes.channel(url)) }
@@ -330,6 +334,13 @@ private fun MainScreen(
         else -> tabRoutes.indexOf(currentRoute)
     }
 
+    // One controller for the whole app shell: the mini player renders from it, and the
+    // per-video menus read `visible` to decide whether a queue exists to add to. Built
+    // here rather than inside MiniPlayerHost, which is not composed on the watch route.
+    val miniPlayerVm: MiniPlayerViewModel = appViewModel { MiniPlayerViewModel(it) }
+    val sessionState by miniPlayerVm.uiState.collectAsState()
+
+    CompositionLocalProvider(LocalSessionActive provides sessionState.visible) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
         if (fullscreen || pipMode) {
@@ -373,7 +384,7 @@ private fun MainScreen(
                         locked = locked,
                         onSetLocked = { locked = it },
                     )
-                    if (!onWatchRoute) MiniPlayerHost(onOpen = openMiniPlayer)
+                    if (!onWatchRoute) MiniPlayerHost(miniPlayerVm, sessionState, onOpen = openMiniPlayer)
                 }
             }
         } else {
@@ -383,7 +394,7 @@ private fun MainScreen(
                     // duplicate chrome, and fullscreen/PiP want the whole window.
                     if (!onWatchRoute && !pipMode) {
                         Column {
-                            MiniPlayerHost(onOpen = openMiniPlayer)
+                            MiniPlayerHost(miniPlayerVm, sessionState, onOpen = openMiniPlayer)
                             LpBottomBar(
                                 items = bottomNavItems(unreadCount),
                                 selectedIndex = selectedIndex,
@@ -412,12 +423,18 @@ private fun MainScreen(
             }
         }
     }
+    }
 }
 
+/** Whether a playback session is live, for menus that offer "Add to queue". */
+val LocalSessionActive = staticCompositionLocalOf { false }
+
 @Composable
-private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
-    val vm: MiniPlayerViewModel = appViewModel { MiniPlayerViewModel(it) }
-    val state by vm.uiState.collectAsState()
+private fun MiniPlayerHost(
+    vm: MiniPlayerViewModel,
+    state: MiniPlayerViewModel.UiState,
+    onOpen: (StreamRef) -> Unit,
+) {
     val ref = state.ref
     if (!state.visible || ref == null) return
     LpMiniPlayer(
@@ -437,7 +454,7 @@ private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
 private fun AppNavHost(
     navController: NavHostController,
     modifier: Modifier = Modifier,
-    openVideo: (StreamRef, List<StreamRef>) -> Unit,
+    openVideo: (StreamRef) -> Unit,
     openChannel: (String) -> Unit,
     openPlaylist: (String) -> Unit,
     openSearch: () -> Unit,
@@ -470,7 +487,7 @@ private fun AppNavHost(
                 url = url,
             )
             WatchScreen(
-                vm = appViewModel { WatchViewModel(it, ref, request?.second.orEmpty()) },
+                vm = appViewModel { WatchViewModel(it, ref) },
                 fullscreen = fullscreen,
                 pipMode = pipMode,
                 locked = locked,

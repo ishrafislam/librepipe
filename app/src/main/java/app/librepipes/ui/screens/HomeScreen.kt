@@ -43,6 +43,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.R
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpFeedSkeleton
@@ -65,13 +67,15 @@ private enum class HomeFilter(val label: String) {
 @Composable
 fun HomeScreen(
     vm: HomeViewModel,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
     onOpenSearch: () -> Unit,
 ) {
     val state = vm.uiState.collectAsState().value
     var filter by rememberSaveable { mutableStateOf(HomeFilter.ALL) }
     val context = LocalContext.current
     val online by Connectivity.observeOnline(context).collectAsState(initial = Connectivity.isOnline(context))
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
 
     PullToRefreshBox(
         isRefreshing = state.loading,
@@ -137,7 +141,8 @@ fun HomeScreen(
                         items(visible, key = { it.id }) { video ->
                             LpVideoCard(
                                 ref = video,
-                                onClick = { onOpenVideo(video, visible) },
+                                onClick = { onOpenVideo(video) },
+                                onMenuClick = { videoMenu.open(video) },
                                 width = null,
                                 modifier = Modifier
                                     .fillMaxWidth()

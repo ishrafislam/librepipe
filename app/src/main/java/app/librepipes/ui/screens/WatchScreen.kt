@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -100,6 +101,8 @@ fun WatchScreen(
     BackHandler(enabled = fullscreen && !locked) { onToggleFullscreen() }
     BackHandler(enabled = locked) { onSetLocked(false) }
 
+    var showQueue by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -117,8 +120,26 @@ fun WatchScreen(
             modifier = if (fullscreen) Modifier.weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
         )
         if (!fullscreen) {
-            DetailSections(vm = vm, onOpenChannel = onOpenChannel)
+            Box(modifier = Modifier.weight(1f)) {
+                DetailSections(vm = vm, onOpenChannel = onOpenChannel)
+            }
+            // Docked like the mini player. Only worth showing once the queue holds
+            // something beyond what is already on screen.
+            if (!locked && vm.queue.size > 1) {
+                // No navigationBarsPadding here: the route already sits inside the
+                // Scaffold's content padding, so applying the inset again would leave a
+                // second gap under the bar.
+                QueueBar(
+                    count = vm.queue.size,
+                    nextTitle = vm.queue.getOrNull(vm.queueIndex + 1)?.title,
+                    onClick = { showQueue = true },
+                )
+            }
         }
+    }
+
+    if (showQueue) {
+        QueueSheet(vm = vm, onDismiss = { showQueue = false })
     }
 }
 

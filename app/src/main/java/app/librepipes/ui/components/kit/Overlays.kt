@@ -68,6 +68,10 @@ fun LpSheet(
     modifier: Modifier = Modifier,
     /** Supply on a drill-down page to show a back arrow beside the title. */
     onBack: (() -> Unit)? = null,
+    /** Lets a long list (the queue) use most of the screen instead of 60%. */
+    fullHeight: Boolean = false,
+    /** Trailing action beside the title, e.g. the queue's "Clear". */
+    action: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(
@@ -128,6 +132,7 @@ fun LpSheet(
                             bottom = 16.dp,
                         ),
                 )
+                action?.invoke()
             }
             Column(
                 modifier = Modifier
@@ -135,7 +140,10 @@ fun LpSheet(
                     // A floor keeps a page swap from collapsing the content toward zero,
                     // which re-anchors the sheet and settles it to Hidden — i.e. the
                     // sheet closing instead of navigating.
-                    .heightIn(min = 200.dp, max = (screenHeight * 0.6f).dp)
+                    .heightIn(
+                        min = 200.dp,
+                        max = (screenHeight * if (fullHeight) 0.88f else 0.6f).dp,
+                    )
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {

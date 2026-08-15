@@ -34,6 +34,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpContextMenu
 import app.librepipes.ui.components.kit.LpDialog
 import app.librepipes.ui.components.kit.LpEmptyState
@@ -50,7 +52,7 @@ import java.util.Calendar
 fun HistoryScreen(
     vm: HistoryViewModel,
     onBack: () -> Unit,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
     val entries = vm.entries
     val recording = vm.recording
@@ -147,7 +149,7 @@ private fun HistoryRow(
     vm: HistoryViewModel,
     entry: HistoryViewModel.HistoryEntry,
     ref: StreamRef,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val entity = entry.entity
@@ -156,9 +158,12 @@ private fun HistoryRow(
     } else 0f
     val remainingMs = (entity.durationMs - entity.positionMs).coerceAtLeast(0L)
 
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
     LpVideoRow(
         ref = ref,
-        onClick = { onOpenVideo(ref, emptyList()) },
+        onClick = { onOpenVideo(ref) },
+        onMenuClick = { videoMenu.open(ref) },
         progress = progress,
         onLongPress = { showMenu = true },
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),

@@ -48,6 +48,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpErrorState
 import app.librepipes.ui.components.kit.LpFeedSkeleton
@@ -65,7 +67,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 @Composable
 fun SubscriptionsScreen(
     vm: SubscriptionsViewModel,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
     onOpenChannel: (String) -> Unit,
     onOpenSearch: () -> Unit,
 ) {
@@ -207,15 +209,17 @@ private fun ChannelStrip(
 private fun VideoList(
     vm: SubscriptionsViewModel,
     listState: LazyListState,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
     PaginateOnScroll(vm, listState.layoutInfoLastIndex())
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
         items(vm.videos, key = { it.id }) { ref ->
             LpVideoRow(
                 ref = ref,
-                onClick = { onOpenVideo(ref, vm.videos) },
-                showMenu = false,
+                onClick = { onOpenVideo(ref) },
+                onMenuClick = { videoMenu.open(ref) },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
@@ -227,8 +231,10 @@ private fun VideoList(
 private fun VideoGrid(
     vm: SubscriptionsViewModel,
     gridState: LazyGridState,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
     PaginateOnScroll(vm, gridState.layoutInfoLastIndex())
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -241,7 +247,8 @@ private fun VideoGrid(
         items(vm.videos, key = { it.id }) { ref ->
             LpVideoCard(
                 ref = ref,
-                onClick = { onOpenVideo(ref, vm.videos) },
+                onClick = { onOpenVideo(ref) },
+                onMenuClick = { videoMenu.open(ref) },
                 width = null,
                 showAvatar = false,
                 modifier = Modifier.fillMaxWidth(),

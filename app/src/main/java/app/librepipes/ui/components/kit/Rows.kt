@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -71,6 +72,8 @@ fun LpVideoCard(
     showChannel: Boolean = true,
     showAvatar: Boolean = true,
     progress: Float? = null,
+    /** Opens the overflow menu. The glyph is inert when null. */
+    onMenuClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(
@@ -165,10 +168,12 @@ fun LpVideoCard(
             }
             Icon(
                 Icons.Rounded.MoreVert,
-                contentDescription = null,
+                contentDescription = if (onMenuClick != null) "More options" else null,
                 tint = colors.onSurfaceVariant,
                 modifier = Modifier
                     .size(48.dp)
+                    .clip(CircleShape)
+                    .then(if (onMenuClick != null) Modifier.clickable(onClick = onMenuClick) else Modifier)
                     .padding(13.dp),
             )
         }
@@ -187,6 +192,8 @@ fun LpVideoRow(
     showMenu: Boolean = true,
     /** Off on a channel page, where every row has the same owner. */
     showChannel: Boolean = true,
+    /** Opens the overflow menu. The glyph is inert when null. */
+    onMenuClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -250,10 +257,12 @@ fun LpVideoRow(
         if (showMenu) {
             Icon(
                 Icons.Rounded.MoreVert,
-                contentDescription = null,
+                contentDescription = if (onMenuClick != null) "More options" else null,
                 tint = colors.onSurfaceVariant,
                 modifier = Modifier
                     .size(48.dp)
+                    .clip(CircleShape)
+                    .then(if (onMenuClick != null) Modifier.clickable(onClick = onMenuClick) else Modifier)
                     .padding(14.dp),
             )
         }

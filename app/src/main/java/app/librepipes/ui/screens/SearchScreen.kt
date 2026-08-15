@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import app.librepipes.data.db.SearchHistoryEntity
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpChannelRow
 import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpErrorState
@@ -69,7 +71,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 fun SearchScreen(
     vm: SearchViewModel,
     onBack: () -> Unit,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
     onOpenChannel: (String) -> Unit,
     onOpenPlaylist: (String) -> Unit,
 ) {
@@ -313,7 +315,7 @@ private fun PrivacyNote() {
 private fun ResultsSection(
     vm: SearchViewModel,
     listState: LazyListState,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
     onOpenChannel: (String) -> Unit,
     onOpenPlaylist: (String) -> Unit,
 ) {
@@ -321,6 +323,8 @@ private fun ResultsSection(
     val loading = vm.loading
     val error: AppError? = vm.error
     val skeleton = rememberDelayedSkeleton(loading && items.isEmpty())
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
     when {
         error != null && items.isEmpty() -> LpErrorState(
             message = error.message,
@@ -348,8 +352,8 @@ private fun ResultsSection(
                     when (item) {
                         is Extractor.SearchItem.Video -> LpVideoRow(
                             ref = item.stream,
-                            onClick = { onOpenVideo(item.stream, emptyList()) },
-                            showMenu = false,
+                            onClick = { onOpenVideo(item.stream) },
+                            onMenuClick = { videoMenu.open(item.stream) },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         )
 

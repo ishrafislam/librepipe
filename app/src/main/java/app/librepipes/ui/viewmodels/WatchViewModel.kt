@@ -34,7 +34,6 @@ import androidx.compose.runtime.setValue
 class WatchViewModel(
     private val container: AppContainer,
     private val initialRef: StreamRef,
-    private val queue: List<StreamRef>,
 ) : ViewModel() {
 
     var ref by mutableStateOf(initialRef)
@@ -85,7 +84,16 @@ class WatchViewModel(
      */
     val isLive: Boolean get() = info?.isLive ?: ref.isLive
 
+    /** The session timeline, newest state first refreshed by the poll loop. */
+    var queue by mutableStateOf<List<StreamRef>>(emptyList())
+        private set
+    var queueIndex by mutableStateOf(0)
+        private set
+    var autoplay by mutableStateOf(true)
+        private set
+
     private var controller: MediaController? = null
+    private var queueIds: List<String> = emptyList()
     private var chapterSeconds: List<Long> = emptyList()
     /** Set once we've dropped to the progressive stream, so a retry can't loop. */
     private var fellBackToProgressive = false
@@ -93,7 +101,9 @@ class WatchViewModel(
     init {
         viewModelScope.launch {
             val resolved = runCatching {
-                PlaybackOpener.startSession(container.appContext, initialRef, queue.ifEmpty { listOf(initialRef) })
+                // One video, never the surrounding list: the queue is only what the user
+                // put in it, and resolve() extracts every queue entry eagerly.
+                PlaybackOpener.startSession(container.appContext, initialRef, listOf(initialRef))
             }
             resolved.exceptionOrNull()?.let { error = it.toAppError() }
             premiereAt = resolved.getOrNull()?.premiereAt
@@ -127,6 +137,41 @@ class WatchViewModel(
                 subscribed = url != null && subs.any { it.channelUrl == url }
             }
         }
+        viewModelScope.launch {
+            container.settings.autoplay.collect { autoplay = it }
+        }
+    }
+
+    /**
+     * The queue advanced to another video. Everything the page shows was fetched for the
+     * previous one and `adopt` refuses to overwrite a non-null `info`, so clear first —
+     * otherwise the page keeps the old title, description, chapters and quality list.
+     */
+    private fun adoptNewItem(next: StreamRef) {
+        info = null
+        watchNext = null
+        chapterSeconds = emptyList()
+        availableHeights = emptyList()
+        currentHeight = 0
+        chapters = emptyList()
+        error = null
+        fellBackToProgressive = false
+        viewModelScope.launch {
+            runCatching { Extractor.stream(next.url) }.getOrNull()?.let { adopt(it) }
+        }
+        viewModelScope.launch {
+            watchNext = runCatching { Extractor.watchNext(next.url) }.getOrNull()
+        }
+        viewModelScope.launch {
+            chapterSeconds = runCatching { Extractor.chapters(next.url) }
+                .getOrDefault(emptyList())
+                .map { it.startSeconds }
+            recomputeChapters()
+        }
+        viewModelScope.launch {
+            val url = channelUrl()
+            subscribed = url != null && container.subscriptions.getAll().any { it.channelUrl == url }
+        }
     }
 
     private fun adopt(stream: StreamInfo) {
@@ -151,6 +196,41 @@ class WatchViewModel(
 
     fun prev() {
         controller?.seekToPreviousMediaItem()
+    }
+
+    fun playQueueItem(index: Int) {
+        val c = controller ?: return
+        if (index in 0 until c.mediaItemCount) c.seekTo(index, 0L)
+    }
+
+    fun moveQueueItem(from: Int, to: Int) {
+        val c = controller ?: return
+        if (from == to) return
+        if (from !in 0 until c.mediaItemCount || to !in 0 until c.mediaItemCount) return
+        c.moveMediaItem(from, to)
+        refresh(c)
+    }
+
+    fun removeQueueItem(index: Int) {
+        val c = controller ?: return
+        if (index !in 0 until c.mediaItemCount) return
+        c.removeMediaItem(index)
+        refresh(c)
+    }
+
+    /** Empties the queue but keeps what is playing — the sheet's Clear sits beside it. */
+    fun clearQueue() {
+        val c = controller ?: return
+        val keep = c.currentMediaItemIndex
+        for (i in c.mediaItemCount - 1 downTo 0) {
+            if (i != keep) c.removeMediaItem(i)
+        }
+        refresh(c)
+    }
+
+    fun toggleAutoplay(value: Boolean) {
+        autoplay = value
+        viewModelScope.launch { container.settings.setAutoplay(value) }
     }
 
     /** [fraction] is 0..1 across the current item. */
@@ -189,7 +269,10 @@ class WatchViewModel(
             val wasPlaying = c.isPlaying
             val audioOnly = container.settings.snapshot().audioOnly || ref.isAudio
             val item = Playback.buildItem(stream, ref, audioOnly, 0, forceProgressive = true)
-            c.setMediaItem(item, position)
+            // Only the current entry: setMediaItem is singular and would drop the
+            // rest of the queue on every quality change or gated-video fallback.
+            c.replaceMediaItem(c.currentMediaItemIndex, item)
+            c.seekTo(position)
             c.prepare()
             if (wasPlaying) c.play()
             // Progressive still has a real height; blanking the list would leave the
@@ -217,7 +300,10 @@ class WatchViewModel(
             val settings = container.settings.snapshot()
             val audioOnly = settings.audioOnly || ref.isAudio
             val item = Playback.buildItem(stream, ref, audioOnly, height, exactHeight = true)
-            c.setMediaItem(item, position)
+            // Only the current entry: setMediaItem is singular and would drop the
+            // rest of the queue on every quality change or gated-video fallback.
+            c.replaceMediaItem(c.currentMediaItemIndex, item)
+            c.seekTo(position)
             c.prepare()
             if (wasPlaying) c.play()
             availableHeights = Playback.availableHeights(stream)
@@ -300,9 +386,12 @@ class WatchViewModel(
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                mediaItem?.mediaMetadata?.extras?.getString(Playback.EXTRA_REF_JSON)
+                val next = mediaItem?.mediaMetadata?.extras?.getString(Playback.EXTRA_REF_JSON)
                     ?.let { StreamRef.fromJson(it) }
-                    ?.let { ref = it }
+                if (next != null && next.id != ref.id) {
+                    ref = next
+                    adoptNewItem(next)
+                }
                 refresh(c)
             }
         })
@@ -326,9 +415,31 @@ class WatchViewModel(
         }
         hasNext = player.hasNextMediaItem()
         hasPrev = player.hasPreviousMediaItem()
+        refreshQueue(player)
         // Report what is actually rendering: ExoPlayer may adapt below the requested cap.
         player.videoSize.height.takeIf { it > 0 }?.let { currentHeight = it }
     }
+
+    /**
+     * Reads the timeline back as refs. The poll runs twice a second, so rebuild the list
+     * only when the timeline actually changed rather than allocating 40 refs a tick.
+     */
+    private fun refreshQueue(player: Player) {
+        val count = player.mediaItemCount
+        val index = player.currentMediaItemIndex.coerceAtLeast(0)
+        if (count != queue.size || index != queueIndex || timelineIds(player) != queueIds) {
+            queue = (0 until count).mapNotNull { i ->
+                player.getMediaItemAt(i).mediaMetadata.extras
+                    ?.getString(Playback.EXTRA_REF_JSON)
+                    ?.let { StreamRef.fromJson(it) }
+            }
+            queueIds = timelineIds(player)
+        }
+        queueIndex = index
+    }
+
+    private fun timelineIds(player: Player): List<String> =
+        (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
 
     /**
      * Fractions need a duration, and the chapter fetch usually finishes first. Recompute

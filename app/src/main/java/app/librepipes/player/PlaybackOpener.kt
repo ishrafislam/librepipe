@@ -60,22 +60,24 @@ object PlaybackOpener {
     }
 
     /**
-     * Ensures [ref] is playing on the session without switching UI. Returns
-     * the resolved items (null on failure — callers decide how to surface it).
+     * Ensures [ref] is playing on the session without switching UI. Returns the resolved
+     * items, or null when the session already held [ref] and nothing had to be resolved
+     * (callers refetch their own metadata in that case).
      */
     suspend fun startSession(
         context: Context,
         ref: StreamRef,
         queue: List<StreamRef> = listOf(ref),
     ): Playback.Resolved? {
+        // Already somewhere in the timeline: seek to it instead of rebuilding. A rebuild
+        // would throw away a queue the user built, and reopening the playing video from
+        // the mini player is the most common way to land here — often mid-buffer, so this
+        // cannot be narrowed to STATE_READY.
+        if (adoptExisting(context, ref)) return null
+
         val resolved = Playback.resolve(context, ref, queue)
         val controller = connect(context)
         try {
-            val current = controller.currentMediaItem?.mediaId
-            if (current == ref.id && controller.playbackState == androidx.media3.common.Player.STATE_READY) {
-                controller.play()
-                return resolved
-            }
             // Disable the renderers first so the video codec is released. Swapping items
             // on a playing player let it carry a codec configured for the previous stream
             // into the next one — visible as torn macroblocks for the first seconds when
@@ -86,6 +88,21 @@ object PlaybackOpener {
             controller.prepare()
             controller.play()
             return resolved
+        } finally {
+            controller.release()
+        }
+    }
+
+    private suspend fun adoptExisting(context: Context, ref: StreamRef): Boolean {
+        val controller = connect(context)
+        try {
+            if (controller.playbackState == androidx.media3.common.Player.STATE_IDLE) return false
+            val index = (0 until controller.mediaItemCount)
+                .firstOrNull { controller.getMediaItemAt(it).mediaId == ref.id }
+                ?: return false
+            if (index != controller.currentMediaItemIndex) controller.seekTo(index, 0L)
+            controller.play()
+            return true
         } finally {
             controller.release()
         }

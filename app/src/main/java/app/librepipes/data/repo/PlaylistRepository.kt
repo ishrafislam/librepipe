@@ -42,6 +42,19 @@ class PlaylistRepository(
         )
     }
 
+    /**
+     * Appends to the implicit "Watch later" list, creating it on first use. It is an
+     * ordinary local playlist, so it shows up in Library with the rest.
+     */
+    suspend fun addToWatchLater(ref: StreamRef) {
+        val id = playlistDao.findByName(WATCH_LATER)?.id ?: create(WATCH_LATER)
+        addItem(id, ref)
+    }
+
+    companion object {
+        const val WATCH_LATER = "Watch later"
+    }
+
     suspend fun removeItem(itemId: Long) = itemDao.delete(itemId)
 
     suspend fun itemsAsRefs(playlistId: Long): List<StreamRef> =
