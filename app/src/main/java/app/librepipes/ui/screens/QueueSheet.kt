@@ -65,7 +65,12 @@ fun QueueBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = Spacing.space3, end = Spacing.space3, top = Spacing.space2)
+            .padding(
+                start = Spacing.space3,
+                end = Spacing.space3,
+                top = Spacing.space2,
+                bottom = Spacing.space3,
+            )
             .height(64.dp)
             .clip(ShapeTokens.md)
             .background(colors.surfaceContainerHigh)
