@@ -285,6 +285,7 @@ object Extractor {
             for (video in initialVideos) {
                 if (seen.add(video.id)) videos += video
             }
+            hasMore = nextToken != null
         }
 
         /** Kept for API compatibility; initial page loads eagerly in [Extractor.playlist]. */

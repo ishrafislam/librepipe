@@ -486,8 +486,12 @@ private fun AppNavHost(
                 title = "",
                 url = url,
             )
+            val initialQueue = request?.second
+                ?.distinctBy { it.id }
+                ?.takeIf { it.isNotEmpty() }
+                ?: listOf(ref)
             WatchScreen(
-                vm = appViewModel { WatchViewModel(it, ref) },
+                vm = appViewModel { WatchViewModel(it, ref, initialQueue) },
                 fullscreen = fullscreen,
                 pipMode = pipMode,
                 locked = locked,
@@ -565,7 +569,10 @@ private fun AppNavHost(
             PlaylistScreen(
                 vm = appViewModel { PlaylistViewModel(it, url) },
                 onBack = { navController.popBackStack() },
-                onOpenVideo = openVideo,
+                onPlayQueue = { selected, queue ->
+                    WatchRequest.set(selected, queue)
+                    navController.navigate(Routes.watch(selected.url))
+                },
             )
         }
         composable(

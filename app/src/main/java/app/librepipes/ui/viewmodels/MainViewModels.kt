@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.IOException
 
 // ---------------------------------------------------------------------- Home
 
@@ -341,8 +344,14 @@ class PlaylistViewModel(
         private set
     var error by mutableStateOf<AppError?>(null)
         private set
+    var preparingQueue by mutableStateOf(false)
+        private set
+    var queuePreparationError by mutableStateOf<AppError?>(null)
+        private set
 
     private var feed: Extractor.PlaylistFeed? = null
+    private val paginationMutex = Mutex()
+    private var retrySelectionId: String? = null
 
     init {
         load()
@@ -368,12 +377,52 @@ class PlaylistViewModel(
 
     fun loadMore() {
         val f = feed ?: return
-        if (!f.hasMore || loadingMore) return
+        if (!f.hasMore || loadingMore || preparingQueue) return
         viewModelScope.launch {
             loadingMore = true
-            val ok = runCatching { f.loadMore() }.getOrDefault(false)
-            if (ok) videos = f.videos.toList()
+            paginationMutex.withLock {
+                val ok = runCatching { if (f.hasMore) f.loadMore() else false }.getOrDefault(false)
+                if (ok) videos = f.videos.toList()
+            }
             loadingMore = false
         }
+    }
+
+    fun playAll(onReady: (StreamRef, List<StreamRef>) -> Unit) {
+        val first = videos.firstOrNull() ?: return
+        playFrom(first, onReady)
+    }
+
+    fun playFrom(
+        selected: StreamRef,
+        onReady: (StreamRef, List<StreamRef>) -> Unit,
+    ) {
+        val f = feed ?: return
+        if (preparingQueue || videos.none { it.id == selected.id }) return
+        preparingQueue = true
+        queuePreparationError = null
+        retrySelectionId = selected.id
+        viewModelScope.launch {
+            try {
+                val queue = paginationMutex.withLock {
+                    while (f.hasMore) {
+                        if (!f.loadMore()) throw IOException("Playlist continuation did not load")
+                        videos = f.videos.toList()
+                    }
+                    f.videos.distinctBy { it.id }
+                }
+                val queueSelection = queue.firstOrNull { it.id == selected.id }
+                if (queueSelection != null) onReady(queueSelection, queue)
+            } catch (e: Exception) {
+                queuePreparationError = e.toAppError()
+            } finally {
+                preparingQueue = false
+            }
+        }
+    }
+
+    fun retryPlay(onReady: (StreamRef, List<StreamRef>) -> Unit) {
+        val selected = retrySelectionId?.let { id -> videos.firstOrNull { it.id == id } } ?: return
+        playFrom(selected, onReady)
     }
 }

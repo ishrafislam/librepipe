@@ -34,7 +34,12 @@ import androidx.compose.runtime.setValue
 class WatchViewModel(
     private val container: AppContainer,
     private val initialRef: StreamRef,
+    initialQueue: List<StreamRef> = listOf(initialRef),
 ) : ViewModel() {
+
+    private val startupQueue = initialQueue
+        .distinctBy { it.id }
+        .let { queue -> if (queue.any { it.id == initialRef.id }) queue else listOf(initialRef) + queue }
 
     var ref by mutableStateOf(initialRef)
         private set
@@ -101,9 +106,12 @@ class WatchViewModel(
     init {
         viewModelScope.launch {
             val resolved = runCatching {
-                // One video, never the surrounding list: the queue is only what the user
-                // put in it, and resolve() extracts every queue entry eagerly.
-                PlaybackOpener.startSession(container.appContext, initialRef, listOf(initialRef))
+                PlaybackOpener.startSession(
+                    context = container.appContext,
+                    ref = initialRef,
+                    queue = startupQueue,
+                    incrementalQueue = startupQueue.size > 1,
+                )
             }
             resolved.exceptionOrNull()?.let { error = it.toAppError() }
             premiereAt = resolved.getOrNull()?.premiereAt
