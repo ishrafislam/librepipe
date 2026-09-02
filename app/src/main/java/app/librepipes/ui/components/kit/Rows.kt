@@ -342,6 +342,7 @@ fun LpPlaylistRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    thumbnailWidth: Dp = 96.dp,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -356,7 +357,8 @@ fun LpPlaylistRow(
                 model = playlist.thumbnailUrl,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(width = 96.dp, height = 54.dp)
+                    .width(thumbnailWidth)
+                    .aspectRatio(16f / 9f)
                     .clip(ShapeTokens.md),
                 contentScale = ContentScale.Crop,
             )

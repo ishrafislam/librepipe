@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -169,13 +170,32 @@ interface DownloadDao {
 
 @Dao
 interface SearchHistoryDao {
-    @Query("SELECT * FROM search_history ORDER BY createdAt DESC LIMIT :limit")
+    @Query(
+        "SELECT entry.* FROM search_history AS entry " +
+            "WHERE entry.id = (" +
+            "SELECT recent.id FROM search_history AS recent " +
+            "WHERE recent.query = entry.query COLLATE NOCASE " +
+            "ORDER BY recent.createdAt DESC, recent.id DESC LIMIT 1" +
+            ") ORDER BY entry.createdAt DESC, entry.id DESC LIMIT :limit"
+    )
     fun observeRecent(limit: Int): Flow<List<SearchHistoryEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: SearchHistoryEntity)
 
-    @Query("DELETE FROM search_history WHERE id = :id")
+    @Query("DELETE FROM search_history WHERE query = :query COLLATE NOCASE")
+    suspend fun deleteByQuery(query: String)
+
+    @Transaction
+    suspend fun replace(entity: SearchHistoryEntity) {
+        deleteByQuery(entity.query)
+        insert(entity)
+    }
+
+    @Query(
+        "DELETE FROM search_history WHERE query = " +
+            "(SELECT query FROM search_history WHERE id = :id) COLLATE NOCASE"
+    )
     suspend fun delete(id: Long)
 
     @Query("DELETE FROM search_history")

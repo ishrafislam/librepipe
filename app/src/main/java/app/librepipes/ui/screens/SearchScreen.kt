@@ -342,13 +342,8 @@ private fun ResultsSection(
         )
 
         else -> {
-            // A channel result is usually what the query meant, so lead with it.
-            // sortedBy is stable, leaving videos and playlists in server order.
-            val ordered = remember(items) {
-                items.sortedBy { it !is Extractor.SearchItem.Channel }
-            }
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(ordered, key = { it.key() }) { item ->
+                items(items, key = { it.key() }) { item ->
                     when (item) {
                         is Extractor.SearchItem.Video -> LpVideoRow(
                             ref = item.stream,
@@ -377,6 +372,7 @@ private fun ResultsSection(
                             playlist = item.playlist,
                             onClick = { onOpenPlaylist(item.playlist.url) },
                             subtitle = "${item.playlist.streamCount} videos",
+                            thumbnailWidth = 160.dp,
                             modifier = Modifier.padding(horizontal = 12.dp),
                         )
                     }

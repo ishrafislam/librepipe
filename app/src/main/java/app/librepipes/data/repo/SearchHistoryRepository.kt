@@ -11,7 +11,7 @@ class SearchHistoryRepository(private val dao: SearchHistoryDao) {
     suspend fun add(query: String) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
-        dao.insert(SearchHistoryEntity(query = trimmed, createdAt = System.currentTimeMillis()))
+        dao.replace(SearchHistoryEntity(query = trimmed, createdAt = System.currentTimeMillis()))
     }
 
     suspend fun remove(id: Long) = dao.delete(id)

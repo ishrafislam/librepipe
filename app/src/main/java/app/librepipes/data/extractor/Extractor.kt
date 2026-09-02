@@ -58,6 +58,10 @@ object Extractor {
         }
     }
 
+    /** Promotes channels within one response page without reordering later pages globally. */
+    internal fun channelsFirst(items: List<SearchItem>): List<SearchItem> =
+        items.sortedBy { it !is SearchItem.Channel }
+
     class SearchFeed internal constructor(
         private val client: InnertubeClient,
         private val query: String,
@@ -71,7 +75,7 @@ object Extractor {
 
         init {
             val seen = HashSet<String>()
-            for (item in initialItems) {
+            for (item in channelsFirst(initialItems)) {
                 if (seen.add(item.key())) items += item
             }
         }
@@ -88,7 +92,7 @@ object Extractor {
         private fun consume(page: JSONObject) {
             val parsed = parseSearchPage(page)
             val seen = items.mapTo(HashSet()) { it.key() }
-            for (item in parsed.items) {
+            for (item in channelsFirst(parsed.items)) {
                 if (seen.add(item.key())) items += item
             }
             nextToken = parsed.nextToken
