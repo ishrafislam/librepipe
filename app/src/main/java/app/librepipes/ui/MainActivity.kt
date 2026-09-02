@@ -7,7 +7,9 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.util.Rational
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +18,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -84,6 +87,7 @@ import app.librepipes.ui.screens.PlaylistScreen
 import app.librepipes.ui.screens.SearchScreen
 import app.librepipes.ui.screens.SettingsScreen
 import app.librepipes.ui.screens.SubscriptionsScreen
+import app.librepipes.ui.screens.UpdatePrompt
 import app.librepipes.ui.screens.WatchScreen
 import app.librepipes.ui.theme.LibrePipeTheme
 import app.librepipes.ui.theme.Motion
@@ -98,11 +102,13 @@ import app.librepipes.ui.viewmodels.PlaylistViewModel
 import app.librepipes.ui.viewmodels.SearchViewModel
 import app.librepipes.ui.viewmodels.SettingsViewModel
 import app.librepipes.ui.viewmodels.SubscriptionsViewModel
+import app.librepipes.ui.viewmodels.UpdateViewModel
 import app.librepipes.ui.viewmodels.WatchViewModel
 import app.librepipes.ui.viewmodels.appViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 
 object Routes {
     const val HOME = "home"
@@ -137,6 +143,12 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    private var pendingUpdateApk: File? = null
+    private val unknownSourcesLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            installPendingUpdateIfAllowed()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -170,6 +182,7 @@ class MainActivity : ComponentActivity() {
                         onWatchActiveChanged = { watchActive = it },
                         onEnterPip = { enterPip() },
                         onFullscreenChanged = { setFullscreen(it) },
+                        onInstallUpdate = { requestUpdateInstall(it) },
                     )
                     AnimatedVisibility(
                         visible = showSplash,
@@ -228,11 +241,45 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         PopupLauncher.consumePending(this)
+        installPendingUpdateIfAllowed()
     }
 
     private fun requestNotificationPermission() {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun requestUpdateInstall(path: String) {
+        val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return
+        val updateDir = runCatching { File(cacheDir, "updates").canonicalFile }.getOrNull() ?: return
+        if (!file.exists() || file.parentFile != updateDir) return
+        pendingUpdateApk = file
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            )
+            unknownSourcesLauncher.launch(intent)
+        } else {
+            installPendingUpdateIfAllowed()
+        }
+    }
+
+    private fun installPendingUpdateIfAllowed() {
+        val file = pendingUpdateApk ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        if (!file.exists()) {
+            pendingUpdateApk = null
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (intent.resolveActivity(packageManager) != null) {
+            pendingUpdateApk = null
+            startActivity(intent)
         }
     }
 
@@ -259,6 +306,7 @@ private fun MainScreen(
     onWatchActiveChanged: (Boolean) -> Unit,
     onEnterPip: () -> Unit,
     onFullscreenChanged: (Boolean) -> Unit,
+    onInstallUpdate: (String) -> Unit,
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -268,6 +316,9 @@ private fun MainScreen(
 
     val app = context.applicationContext as LibrePipeApp
     val unreadCount by app.container.subscriptions.observeUnreadCount().collectAsState(initial = 0)
+    val updateVm: UpdateViewModel = appViewModel { UpdateViewModel(it) }
+
+    LaunchedEffect(Unit) { updateVm.check(manual = false) }
 
     LaunchedEffect(deepLink) {
         if (deepLink != null) {
@@ -361,6 +412,7 @@ private fun MainScreen(
                 onToggleFullscreen = { fullscreen = !fullscreen },
                 locked = locked,
                 onSetLocked = { locked = it },
+                updateVm = updateVm,
             )
         } else if (wide) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -383,6 +435,7 @@ private fun MainScreen(
                         onToggleFullscreen = { fullscreen = !fullscreen },
                         locked = locked,
                         onSetLocked = { locked = it },
+                        updateVm = updateVm,
                     )
                     if (!onWatchRoute) MiniPlayerHost(miniPlayerVm, sessionState, onOpen = openMiniPlayer)
                 }
@@ -419,10 +472,12 @@ private fun MainScreen(
                     onToggleFullscreen = { fullscreen = !fullscreen },
                     locked = locked,
                     onSetLocked = { locked = it },
+                    updateVm = updateVm,
                 )
             }
         }
     }
+    UpdatePrompt(vm = updateVm, onInstall = onInstallUpdate)
     }
 }
 
@@ -466,6 +521,7 @@ private fun AppNavHost(
     onToggleFullscreen: () -> Unit,
     locked: Boolean,
     onSetLocked: (Boolean) -> Unit,
+    updateVm: UpdateViewModel,
 ) {
     NavHost(
         navController = navController,
@@ -545,6 +601,7 @@ private fun AppNavHost(
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 vm = appViewModel { SettingsViewModel(it) },
+                updateVm = updateVm,
                 onRequestNotificationPermission = onRequestNotificationPermission,
             )
         }

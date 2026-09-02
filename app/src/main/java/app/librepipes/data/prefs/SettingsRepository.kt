@@ -5,6 +5,8 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -28,6 +30,10 @@ class SettingsRepository(private val context: Context) {
         val AUTOPLAY = booleanPreferencesKey("autoplay")
         val VIEW_MODE = intPreferencesKey("view_mode")         // 0 list, 1 grid
         val PLAYBACK_SPEED = floatPreferencesKey("playback_speed")
+        val UPDATE_LAST_CHECK = longPreferencesKey("update_last_check")
+        val UPDATE_ETAG = stringPreferencesKey("update_etag")
+        val UPDATE_CACHED_RELEASE = stringPreferencesKey("update_cached_release")
+        val UPDATE_DISMISSED_VERSION = intPreferencesKey("update_dismissed_version")
     }
 
     private val dataStore = context.settingsDataStore
@@ -57,6 +63,41 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAutoplay(value: Boolean) = dataStore.edit { it[Keys.AUTOPLAY] = value }
     suspend fun setViewMode(value: Int) = dataStore.edit { it[Keys.VIEW_MODE] = value }
     suspend fun setPlaybackSpeed(value: Float) = dataStore.edit { it[Keys.PLAYBACK_SPEED] = value }
+
+    data class UpdateMetadata(
+        val lastCheckAt: Long,
+        val etag: String?,
+        val cachedReleaseJson: String?,
+        val dismissedVersionCode: Int,
+    )
+
+    suspend fun updateMetadata(): UpdateMetadata {
+        val prefs = dataStore.data.first()
+        return UpdateMetadata(
+            lastCheckAt = prefs[Keys.UPDATE_LAST_CHECK] ?: 0L,
+            etag = prefs[Keys.UPDATE_ETAG],
+            cachedReleaseJson = prefs[Keys.UPDATE_CACHED_RELEASE],
+            dismissedVersionCode = prefs[Keys.UPDATE_DISMISSED_VERSION] ?: 0,
+        )
+    }
+
+    suspend fun saveUpdateCheck(
+        checkedAt: Long,
+        etag: String?,
+        cachedReleaseJson: String?,
+    ) = dataStore.edit { prefs ->
+        prefs[Keys.UPDATE_LAST_CHECK] = checkedAt
+        if (etag == null) prefs.remove(Keys.UPDATE_ETAG) else prefs[Keys.UPDATE_ETAG] = etag
+        if (cachedReleaseJson == null) {
+            prefs.remove(Keys.UPDATE_CACHED_RELEASE)
+        } else {
+            prefs[Keys.UPDATE_CACHED_RELEASE] = cachedReleaseJson
+        }
+    }
+
+    suspend fun dismissUpdate(versionCode: Int) = dataStore.edit {
+        it[Keys.UPDATE_DISMISSED_VERSION] = versionCode
+    }
 
     data class Snapshot(
         val theme: Int,
