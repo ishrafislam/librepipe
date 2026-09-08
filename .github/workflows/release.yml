@@ -55,8 +55,8 @@ jobs:
             exit 1
           fi
 
-          latest_manifest_url=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
-            --jq '.assets[] | select(.name == "update.json") | .browser_download_url' 2>/dev/null || true)
+          latest_manifest_url=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '[.[] | select(.draft == false and .prerelease == false)][0].assets[]? | select(.name == "update.json") | .browser_download_url')
           if [[ -n "$latest_manifest_url" ]]; then
             latest_code=$(curl --fail --silent --show-error --location "$latest_manifest_url" | jq -r '.versionCode')
             if (( version_code <= latest_code )); then
