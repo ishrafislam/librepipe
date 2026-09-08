@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,10 +45,13 @@ import app.librepipes.ui.components.kit.LpSwitch
 import app.librepipes.ui.components.kit.LpTopBar
 import app.librepipes.ui.theme.PlexMono
 import app.librepipes.ui.viewmodels.SettingsViewModel
+import app.librepipes.ui.viewmodels.UpdateViewModel
+import app.librepipes.BuildConfig
 
 @Composable
 fun SettingsScreen(
     vm: SettingsViewModel,
+    updateVm: UpdateViewModel,
     onRequestNotificationPermission: () -> Unit,
 ) {
     val theme by vm.settings.theme.collectAsState(initial = 0)
@@ -59,6 +63,7 @@ fun SettingsScreen(
     val notifications by vm.settings.notificationsEnabled.collectAsState(initial = true)
     val refreshInterval by vm.settings.refreshIntervalHours.collectAsState(initial = 6)
     val downloadQuality by vm.settings.downloadQuality.collectAsState(initial = 1080)
+    val updateState by updateVm.uiState.collectAsState()
 
     val qualities = listOf(0 to "Auto", 360 to "360p", 480 to "480p", 720 to "720p", 1080 to "1080p", 1440 to "1440p", 2160 to "2160p")
     val intervals = listOf(2 to "Every 2 hours", 6 to "Every 6 hours", 12 to "Every 12 hours", 24 to "Daily")
@@ -184,8 +189,26 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Rounded.Info,
                 label = "LibrePipe",
-                value = "v0.1",
+                value = "v${BuildConfig.VERSION_NAME}",
                 onClick = {},
+            )
+        }
+        item {
+            val updateValue = when {
+                updateState.debugDisabled -> "Debug build"
+                updateState.checking -> "Checking…"
+                updateState.downloading -> "${updateState.progress}%"
+                updateState.installReadyPath != null -> "Ready"
+                updateState.release != null -> "v${updateState.release?.versionName}"
+                updateState.upToDate -> "Up to date"
+                updateState.error != null -> "Retry"
+                else -> null
+            }
+            SettingsRow(
+                icon = Icons.Rounded.SystemUpdate,
+                label = "Check for updates",
+                value = updateValue,
+                onClick = updateVm::showAvailableUpdate,
             )
         }
         item {

@@ -24,7 +24,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import app.librepipes.ui.theme.ShapeTokens
+import app.librepipes.ui.theme.Spacing
 
 /**
  * Design board 02-B — Inputs & selection.
@@ -63,36 +64,44 @@ fun LpSearchBar(
     onBack: (() -> Unit)? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    /** Supply to make the mic live; when null the mic is not rendered at all. */
+    onVoice: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
-    val active = focused || value.isNotEmpty()
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(ShapeTokens.full)
-            .background(colors.surfaceContainer)
-            .border(
-                width = if (focused) 3.dp else 0.dp,
-                color = if (focused) colors.primary else Color.Transparent,
-                shape = ShapeTokens.full,
-            )
-            .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.CenterStart,
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.space2),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (active && onBack != null) {
-                Icon(
-                    Icons.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .padding(12.dp)
-                        .clickable(onClick = onBack),
+        if (onBack != null) {
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = "Back",
+                tint = colors.onSurface,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(ShapeTokens.full)
+                    .clickable(onClick = onBack)
+                    .padding(12.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(56.dp)
+                .clip(ShapeTokens.full)
+                .background(colors.surfaceContainer)
+                .border(
+                    width = if (focused) 3.dp else 0.dp,
+                    color = if (focused) colors.primary else Color.Transparent,
+                    shape = ShapeTokens.full,
                 )
-            } else {
+                // 4dp + the icons' own 12dp inner padding = a 16dp optical inset.
+                .padding(horizontal = 4.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Rounded.Search,
                     contentDescription = null,
@@ -101,56 +110,54 @@ fun LpSearchBar(
                         .size(48.dp)
                         .padding(12.dp),
                 )
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .onFocusChanged { focused = it.isFocused },
-                textStyle = TextStyle(
-                    color = colors.onSurface,
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize,
-                    lineHeight = MaterialTheme.typography.bodyLarge.lineHeight,
-                ),
-                cursorBrush = SolidColor(colors.primary),
-                singleLine = true,
-                keyboardOptions = keyboardOptions,
-                keyboardActions = keyboardActions,
-                decorationBox = { inner ->
-                    Box(contentAlignment = Alignment.CenterStart) {
-                        if (value.isEmpty() && !focused) {
-                            Text(
-                                text = placeholder,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = colors.outline,
-                            )
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .onFocusChanged { focused = it.isFocused },
+                    textStyle = TextStyle(
+                        color = colors.onSurface,
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize,
+                        lineHeight = MaterialTheme.typography.bodyLarge.lineHeight,
+                    ),
+                    cursorBrush = SolidColor(colors.primary),
+                    singleLine = true,
+                    keyboardOptions = keyboardOptions,
+                    keyboardActions = keyboardActions,
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (value.isEmpty() && !focused) {
+                                Text(
+                                    text = placeholder,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = colors.outline,
+                                )
+                            }
+                            inner()
                         }
-                        inner()
-                    }
-                },
-            )
-            if (active) {
-                Icon(
-                    Icons.Rounded.Close,
-                    contentDescription = "Clear",
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .padding(12.dp)
-                        .clickable { onValueChange("") },
+                    },
                 )
-            } else {
-                Icon(
-                    Icons.Rounded.Mic,
-                    contentDescription = null,
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .padding(12.dp),
-                )
+                if (value.isNotEmpty()) {
+                    Icon(
+                        Icons.Rounded.Close,
+                        contentDescription = "Clear",
+                        tint = colors.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .padding(12.dp)
+                            .clickable { onValueChange("") },
+                    )
+                }
             }
+        }
+        if (onVoice != null) {
+            LpRoundIconButton(
+                icon = Icons.Rounded.Mic,
+                contentDescription = "Voice search",
+                onClick = onVoice,
+            )
         }
     }
 }

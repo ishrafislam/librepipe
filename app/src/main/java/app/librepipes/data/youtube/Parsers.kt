@@ -119,7 +119,9 @@ object Parsers {
                 best = url
             }
         }
-        return best
+        // Channel avatars come back protocol-relative ("//yt3.ggpht.com/…"), which no
+        // image loader can resolve. Video thumbnails already carry a scheme.
+        return best?.let { if (it.startsWith("//")) "https:$it" else it }
     }
 
     /** "3:34" or "1:02:34" -> seconds. */
@@ -226,6 +228,11 @@ object Parsers {
             thumbnailUrl = sourcesBest(o.optJSONObject("thumbnail")),
             uploaderName = ownerRun?.optString("text"),
             uploaderUrl = uploaderUrlFrom(ownerRun?.optJSONObject("navigationEndpoint")),
+            uploaderAvatarUrl = sourcesBest(
+                o.optJSONObject("channelThumbnailSupportedRenderers")
+                    ?.optJSONObject("channelThumbnailWithLinkRenderer")
+                    ?.optJSONObject("thumbnail"),
+            ),
             duration = if (isLive) 0L else parseDuration(runsText(o.optJSONObject("lengthText"))),
             viewCount = parseViewCount(runsText(o.optJSONObject("viewCountText"))),
             textualDate = runsText(o.optJSONObject("publishedTimeText")),
@@ -240,7 +247,12 @@ object Parsers {
             name = runsText(o.optJSONObject("title")) ?: channelId,
             url = channelUrl(channelId),
             avatarUrl = sourcesBest(o.optJSONObject("thumbnail")),
-            subscriberCount = parseCompactCount(runsText(o.optJSONObject("subscriberCountText"))),
+            // YouTube swapped these two: videoCountText holds "21.1M subscribers" and
+            // subscriberCountText holds "@handle". The guards keep us correct either way.
+            subscriberCount = parseCompactCount(runsText(o.optJSONObject("videoCountText")))
+                .takeIf { it > 0 }
+                ?: parseCompactCount(runsText(o.optJSONObject("subscriberCountText"))),
+            handle = runsText(o.optJSONObject("subscriberCountText"))?.takeIf { it.startsWith("@") },
             description = runsText(o.optJSONObject("descriptionSnippet")),
         )
     }
@@ -267,6 +279,7 @@ object Parsers {
         val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
         val rows = metadataRows(meta)
         val (uploader, uploaderUrl) = ownerFromRows(rows)
+        val isLive = isLiveLockup(o)
         return StreamRef(
             id = videoId,
             title = runsText(meta.optJSONObject("title")) ?: videoId,
@@ -276,11 +289,15 @@ object Parsers {
             ),
             uploaderName = uploader,
             uploaderUrl = uploaderUrl,
-            duration = parseDuration(durationBadge(o)),
+            // Absent on channel-tab lockups (all one channel); present on some search lockups.
+            uploaderAvatarUrl = findAll(o, "avatarViewModel")
+                .firstNotNullOfOrNull { sourcesBest(it.optJSONObject("image")) },
+            duration = if (isLive) 0L else parseDuration(durationBadge(o)),
             viewCount = rows.firstNotNullOfOrNull {
                 parseCompactCount(it).takeIf { n -> n > 0 && "view" in it }
             } ?: 0L,
             textualDate = rows.firstOrNull { isDateText(it) },
+            isLive = isLive,
         )
     }
 
@@ -288,18 +305,31 @@ object Parsers {
         val playlistId = o.optString("contentId").takeIf { it.isNotBlank() } ?: return null
         val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
         val rows = metadataRows(meta)
+        val contentImage = o.optJSONObject("contentImage")
+        // A channel's playlists tab stacks the covers: the image sits one level deeper
+        // and the item count only appears as an overlay badge ("5 episodes"), never in
+        // the metadata rows a search result carries.
+        val image = contentImage?.optJSONObject("thumbnailViewModel")?.optJSONObject("image")
+            ?: contentImage?.optJSONObject("collectionThumbnailViewModel")
+                ?.optJSONObject("primaryThumbnail")
+                ?.optJSONObject("thumbnailViewModel")
+                ?.optJSONObject("image")
+        val badgeCount = contentImage
+            ?.let { findAll(it, "thumbnailBadgeViewModel") }
+            ?.firstNotNullOfOrNull { badge ->
+                val text = badge.optString("text")
+                parseViewCount(text).takeIf { it > 0 && Regex("\\d").containsMatchIn(text) }
+            }
         return PlaylistRef(
             id = playlistId,
             name = runsText(meta.optJSONObject("title")) ?: playlistId,
             url = playlistUrl(playlistId),
-            thumbnailUrl = sourcesBest(
-                o.optJSONObject("contentImage")?.optJSONObject("thumbnailViewModel")?.optJSONObject("image"),
-            ),
+            thumbnailUrl = sourcesBest(image),
             uploaderName = rows.firstOrNull { isOwnerText(it) },
             streamCount = rows.firstNotNullOfOrNull {
                 val n = parseViewCount(it)
                 if (n > 0 && Regex("\\d").containsMatchIn(it)) n else null
-            } ?: 0L,
+            } ?: badgeCount ?: 0L,
         )
     }
 
@@ -352,6 +382,7 @@ object Parsers {
         val name: String
         val parts = mutableListOf<String>()
         val avatar: JSONObject?
+        val banner: JSONObject?
         val description: String?
 
         if (classic != null) {
@@ -359,7 +390,9 @@ object Parsers {
                 ?: classic.optString("title").takeIf { it.isNotBlank() }
                 ?: return null
             runsText(classic.optJSONObject("subscriberCountText"))?.let(parts::add)
+            runsText(classic.optJSONObject("videosCountText"))?.let(parts::add)
             avatar = classic.optJSONObject("avatar")
+            banner = classic.optJSONObject("banner")
             description = runsText(classic.optJSONObject("description"))
         } else {
             val viewModel = pageHeader.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
@@ -381,6 +414,9 @@ object Parsers {
                 ?.optJSONObject("decoratedAvatarViewModel")
                 ?.optJSONObject("avatar")
                 ?.optJSONObject("avatarViewModel")
+                ?.optJSONObject("image")
+            banner = viewModel?.optJSONObject("banner")
+                ?.optJSONObject("imageBannerViewModel")
                 ?.optJSONObject("image")
             description = runsText(
                 viewModel?.optJSONObject("description")
@@ -410,8 +446,12 @@ object Parsers {
             name = name,
             url = channelUrl(id),
             avatarUrl = sourcesBest(avatar),
+            bannerUrl = sourcesBest(banner),
             subscriberCount = parts.firstNotNullOfOrNull {
                 parseCompactCount(it).takeIf { n -> n > 0 && "subscriber" in it }
+            } ?: 0L,
+            videoCount = parts.firstNotNullOfOrNull {
+                parseCompactCount(it).takeIf { n -> n > 0 && "video" in it }
             } ?: 0L,
             description = description,
         )
@@ -555,7 +595,10 @@ object Parsers {
             }
         }
         val id = details.optString("videoId").ifBlank { videoId }
-        val isLive = details.optBoolean("isLiveContent") || details.optBoolean("isLive")
+        // `isLiveContent` is set on anything that was ever streamed live, finished VODs
+        // included, so it cannot stand in for "live right now" — using it stripped the
+        // seek bar, subtitles and quality menu from every past live stream.
+        val isLive = details.optBoolean("isLive")
         val streaming = root.optJSONObject("streamingData")
 
         val progressive = mutableListOf<StreamFormat>()
@@ -614,6 +657,7 @@ object Parsers {
             uploaderUrl = details.optString("channelId").takeIf { it.isNotBlank() }?.let { channelUrl(it) },
             duration = details.optString("lengthSeconds").toLongOrNull() ?: 0L,
             viewCount = details.optString("viewCount").toLongOrNull() ?: 0L,
+            description = details.optString("shortDescription").ifBlank { null },
             streamType = streamType,
             premiereAt = premiereAt,
             videoStreams = progressive,
@@ -625,6 +669,27 @@ object Parsers {
         )
     }
 
+    /** Channel avatar, subscriber line and upload date from a `next` response. */
+    fun parseWatchNext(root: JSONObject): WatchNext {
+        val owner = findAll(root, "videoOwnerRenderer").firstOrNull()
+        val primary = findAll(root, "videoPrimaryInfoRenderer").firstOrNull()
+        val ownerRun = owner?.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)
+        val channelId = owner?.optJSONObject("navigationEndpoint")
+            ?.optJSONObject("browseEndpoint")
+            ?.optString("browseId")
+            ?.takeIf { it.isNotBlank() }
+        return WatchNext(
+            uploaderName = ownerRun?.optString("text")?.takeIf { it.isNotBlank() },
+            uploaderUrl = channelId?.let { channelUrl(it) }
+                ?: uploaderUrlFrom(ownerRun?.optJSONObject("navigationEndpoint")),
+            uploaderId = channelId,
+            uploaderAvatarUrl = sourcesBest(owner?.optJSONObject("thumbnail")),
+            subscriberText = runsText(owner?.optJSONObject("subscriberCountText")),
+            dateText = runsText(primary?.optJSONObject("dateText")),
+            relativeDateText = runsText(primary?.optJSONObject("relativeDateText")),
+        )
+    }
+
     private fun parseFormat(o: JSONObject?): StreamFormat? {
         if (o == null) return null
         // All ANDROID client formats come pre-signed as plain URLs.
@@ -632,6 +697,7 @@ object Parsers {
         val mime = o.optString("mimeType").ifBlank { "video/mp4" }
         val codecs = mime.substringAfter("codecs=\"").substringBefore("\"")
             .split(',').map { it.trim().lowercase() }
+        val track = o.optJSONObject("audioTrack")
         return StreamFormat(
             url = url,
             itag = o.optInt("itag"),
@@ -642,9 +708,30 @@ object Parsers {
             height = o.optInt("height"),
             audioQuality = o.optString("audioQuality").ifBlank { null },
             approxDurationMs = o.optString("approxDurationMs").ifBlank { null },
+            codecs = mime.substringAfter("codecs=\"", "").substringBefore("\"").ifBlank { null },
+            contentLength = o.optString("contentLength").toLongOrNull() ?: 0L,
+            fps = o.optInt("fps"),
+            audioSampleRate = o.optString("audioSampleRate").toIntOrNull() ?: 0,
+            audioChannels = o.optInt("audioChannels"),
+            initRange = byteRange(o.optJSONObject("initRange")),
+            indexRange = byteRange(o.optJSONObject("indexRange")),
+            audioTrackId = track?.optString("id")?.takeIf { it.isNotBlank() },
+            audioTrackName = track?.optString("displayName")?.takeIf { it.isNotBlank() },
+            audioIsDefault = track?.optBoolean("audioIsDefault") ?: false,
+            // On dubbed videos audioLanguage is absent and the tag lives in the track
+            // id's prefix: "bn.3" -> "bn", "zh-Hans.3" -> "zh-Hans".
+            audioLanguage = o.optString("audioLanguage").takeIf { it.isNotBlank() }
+                ?: track?.optString("id")?.substringBefore('.')?.takeIf { it.isNotBlank() },
             hasVideo = codecs.any { c -> c.isCodec(VIDEO_CODECS) },
             hasAudio = codecs.any { c -> c.isCodec(AUDIO_CODECS) },
         )
+    }
+
+    /** `{"start":"0","end":"740"}` -> `"0-740"`; null when either bound is missing. */
+    private fun byteRange(o: JSONObject?): String? {
+        val start = o?.optString("start")?.takeIf { it.isNotBlank() } ?: return null
+        val end = o.optString("end").takeIf { it.isNotBlank() } ?: return null
+        return "$start-$end"
     }
 
     /** "avc1.42001e" matches codec family "avc1" (dotted profile suffixes stripped). */
@@ -748,6 +835,20 @@ object Parsers {
             }
         }
         return null
+    }
+
+    /**
+     * Live detection for [parseLockupVideo]. The LIVE badge sits under a different
+     * overlay wrapper than the duration badge, so scan every badge view model under
+     * the thumbnail rather than a single fixed path.
+     */
+    private fun isLiveLockup(o: JSONObject): Boolean {
+        val image = o.optJSONObject("contentImage") ?: return false
+        for (badge in findAll(image, "thumbnailBadgeViewModel")) {
+            if (badge.optString("text").equals("LIVE", ignoreCase = true)) return true
+            if (badge.optString("badgeStyle").contains("LIVE", ignoreCase = true)) return true
+        }
+        return false
     }
 
     private fun isDateText(text: String): Boolean =

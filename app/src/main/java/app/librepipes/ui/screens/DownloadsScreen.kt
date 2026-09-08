@@ -56,7 +56,7 @@ fun DownloadsScreen(
     vm: DownloadsViewModel,
     onBack: () -> Unit,
     onPlayUri: (Uri, String) -> Unit,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
     val downloads = vm.downloads
     var confirmClear by remember { mutableStateOf(false) }

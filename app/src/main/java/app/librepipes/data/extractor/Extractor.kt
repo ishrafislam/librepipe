@@ -7,6 +7,7 @@ import app.librepipes.data.youtube.InnertubeClient
 import app.librepipes.data.youtube.Parsers
 import app.librepipes.data.youtube.StreamInfo
 import app.librepipes.data.youtube.Chapter
+import app.librepipes.data.youtube.WatchNext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -43,7 +44,6 @@ object Extractor {
         VIDEOS("videos", "EgIQAQ%3D%3D"),
         CHANNELS("channels", "EgIQAg%3D%3D"),
         PLAYLISTS("playlists", "EgIQAw%3D%3D"),
-        MUSIC("music_songs", null),
     }
 
     sealed interface SearchItem {
@@ -58,6 +58,10 @@ object Extractor {
         }
     }
 
+    /** Promotes channels within one response page without reordering later pages globally. */
+    internal fun channelsFirst(items: List<SearchItem>): List<SearchItem> =
+        items.sortedBy { it !is SearchItem.Channel }
+
     class SearchFeed internal constructor(
         private val client: InnertubeClient,
         private val query: String,
@@ -71,7 +75,7 @@ object Extractor {
 
         init {
             val seen = HashSet<String>()
-            for (item in initialItems) {
+            for (item in channelsFirst(initialItems)) {
                 if (seen.add(item.key())) items += item
             }
         }
@@ -81,19 +85,14 @@ object Extractor {
 
         suspend fun loadMore(): Boolean = withContext(Dispatchers.IO) {
             val token = nextToken ?: return@withContext false
-            val page = if (filter == SearchFilter.MUSIC) {
-                client.musicSearch(query, token)
-            } else {
-                client.search(query, filter.params, token)
-            }
-            consume(page)
+            consume(client.search(query, filter.params, token))
             true
         }
 
         private fun consume(page: JSONObject) {
             val parsed = parseSearchPage(page)
             val seen = items.mapTo(HashSet()) { it.key() }
-            for (item in parsed.items) {
+            for (item in channelsFirst(parsed.items)) {
                 if (seen.add(item.key())) items += item
             }
             nextToken = parsed.nextToken
@@ -102,11 +101,7 @@ object Extractor {
     }
 
     suspend fun search(query: String, filter: SearchFilter): SearchFeed = onIo { c ->
-        val page = if (filter == SearchFilter.MUSIC) {
-            c.musicSearch(query)
-        } else {
-            c.search(query, filter.params, null)
-        }
+        val page = c.search(query, filter.params, null)
         val parsed = parseSearchPage(page)
         SearchFeed(c, query, filter, parsed.items, parsed.nextToken)
     }
@@ -154,6 +149,14 @@ object Extractor {
         c.chapters(idFromUrl(url))
     }
 
+    /**
+     * Watch-page metadata (channel avatar, subscriber line, upload date). Kept apart
+     * from [stream] on purpose — playback must not wait on a metadata request.
+     */
+    suspend fun watchNext(url: String): WatchNext = onIo { c ->
+        Parsers.parseWatchNext(c.next(idFromUrl(url)))
+    }
+
     // ------------------------------------------------------------------ Channels
 
     class ChannelFeed internal constructor(
@@ -161,17 +164,35 @@ object Extractor {
         private var nextToken: String?,
         val channel: ChannelRef,
         initialVideos: List<StreamRef>,
+        private val browseId: String? = null,
+        private val playlistsParams: String? = null,
     ) {
         val videos = mutableListOf<StreamRef>()
         var hasMore = true
             private set
 
+        /** False when the channel exposes no playlists tab, so the UI can drop it. */
+        val hasPlaylists: Boolean get() = browseId != null && playlistsParams != null
+
+        private var playlistsCache: List<PlaylistRef>? = null
+
         init {
             val seen = HashSet<String>()
             for (video in initialVideos) {
-                if (seen.add(video.id)) videos += video
+                if (seen.add(video.id)) videos += video.withChannel()
             }
         }
+
+        /**
+         * A channel page omits the owner from every item — it is implicit there — so the
+         * parsed refs carry no uploader name, url or avatar. Stamp them from the header
+         * once, here, and every consumer of a channel feed gets complete refs.
+         */
+        private fun StreamRef.withChannel(): StreamRef = copy(
+            uploaderName = uploaderName?.takeIf { it.isNotBlank() } ?: channel.name,
+            uploaderUrl = uploaderUrl?.takeIf { it.isNotBlank() } ?: channel.url,
+            uploaderAvatarUrl = uploaderAvatarUrl ?: channel.avatarUrl,
+        )
 
         /** Kept for API compatibility; initial page loads eagerly in [Extractor.channel]. */
         suspend fun loadInitial() = Unit
@@ -183,11 +204,34 @@ object Extractor {
             true
         }
 
+        /**
+         * The playlists tab, fetched on demand — most visits never open it. Cached, so
+         * switching tabs back and forth costs one request in total.
+         */
+        suspend fun loadPlaylists(): List<PlaylistRef> = withContext(Dispatchers.IO) {
+            playlistsCache?.let { return@withContext it }
+            val id = browseId
+            val params = playlistsParams
+            if (id == null || params == null) return@withContext emptyList()
+            val page = client.browse(id, params, null)
+            val seen = HashSet<String>()
+            val playlists = buildList {
+                for (r in Parsers.findAll(page, "lockupViewModel")) {
+                    if (r.optString("contentType") != "LOCKUP_CONTENT_TYPE_PLAYLIST") continue
+                    Parsers.parseLockupPlaylist(r)?.let { if (seen.add(it.id)) add(it) }
+                }
+            }
+            playlistsCache = playlists
+            playlists
+        }
+
         private fun consume(page: JSONObject) {
             val seen = videos.mapTo(HashSet()) { it.id }
             for (r in Parsers.findAll(page, "lockupViewModel")) {
                 if (r.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
-                    Parsers.parseLockupVideo(r)?.let { v -> if (seen.add(v.id)) videos += v }
+                    Parsers.parseLockupVideo(r)?.let { v ->
+                        if (seen.add(v.id)) videos += v.withChannel()
+                    }
                 }
             }
             nextToken = Parsers.continuationToken(page)
@@ -213,7 +257,15 @@ object Extractor {
                 }
             }
         }
-        ChannelFeed(c, videosPage?.let { Parsers.continuationToken(it) }, channel, videos)
+        val playlistsTab = tabs.firstOrNull { it.first.contains("playlist", ignoreCase = true) }
+        ChannelFeed(
+            c,
+            videosPage?.let { Parsers.continuationToken(it) },
+            channel,
+            videos,
+            browseId,
+            playlistsTab?.second,
+        )
     }
 
     // ------------------------------------------------------------------ Playlists
@@ -233,6 +285,7 @@ object Extractor {
             for (video in initialVideos) {
                 if (seen.add(video.id)) videos += video
             }
+            hasMore = nextToken != null
         }
 
         /** Kept for API compatibility; initial page loads eagerly in [Extractor.playlist]. */

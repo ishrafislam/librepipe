@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,16 +66,19 @@ fun LpVideoCard(
     ref: StreamRef,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    width: Dp = 200.dp,
+    /** Fixed card width; pass null to let the caller's [modifier] size the card. */
+    width: Dp? = 200.dp,
     onLongPress: (() -> Unit)? = null,
     showChannel: Boolean = true,
     showAvatar: Boolean = true,
     progress: Float? = null,
+    /** Opens the overflow menu. The glyph is inert when null. */
+    onMenuClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(
         modifier = modifier
-            .width(width)
+            .then(if (width != null) Modifier.width(width) else Modifier)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
         Box {
@@ -92,9 +96,10 @@ fun LpVideoCard(
                     text = "LIVE",
                     color = colors.error,
                     style = LpBadgeStyle.Small,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
                 )
-            } else if (ref.duration > 0) {
+            }
+            if (ref.duration > 0) {
                 LpDurationBadge(
                     text = Format.durationSeconds(ref.duration),
                     style = LpBadgeStyle.Small,
@@ -120,12 +125,20 @@ fun LpVideoCard(
         }
         Row(modifier = Modifier.padding(top = 12.dp)) {
             if (showAvatar) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(colors.surfaceContainerHigh),
-                )
+                val avatarModifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(colors.surfaceContainerHigh)
+                if (ref.uploaderAvatarUrl != null) {
+                    AsyncImage(
+                        model = ref.uploaderAvatarUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = avatarModifier,
+                    )
+                } else {
+                    Box(modifier = avatarModifier)
+                }
                 Spacer(Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -155,10 +168,12 @@ fun LpVideoCard(
             }
             Icon(
                 Icons.Rounded.MoreVert,
-                contentDescription = null,
+                contentDescription = if (onMenuClick != null) "More options" else null,
                 tint = colors.onSurfaceVariant,
                 modifier = Modifier
                     .size(48.dp)
+                    .clip(CircleShape)
+                    .then(if (onMenuClick != null) Modifier.clickable(onClick = onMenuClick) else Modifier)
                     .padding(13.dp),
             )
         }
@@ -173,6 +188,12 @@ fun LpVideoRow(
     modifier: Modifier = Modifier,
     onLongPress: (() -> Unit)? = null,
     progress: Float? = null,
+    /** Trailing overflow glyph. Decorative today — it carries no click handler. */
+    showMenu: Boolean = true,
+    /** Off on a channel page, where every row has the same owner. */
+    showChannel: Boolean = true,
+    /** Opens the overflow menu. The glyph is inert when null. */
+    onMenuClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -190,6 +211,14 @@ fun LpVideoRow(
                     .clip(ShapeTokens.md),
                 contentScale = ContentScale.Crop,
             )
+            if (ref.isLive) {
+                LpDurationBadge(
+                    text = "LIVE",
+                    color = colors.error,
+                    style = LpBadgeStyle.Tiny,
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                )
+            }
             if (ref.duration > 0) {
                 LpDurationBadge(
                     text = Format.durationSeconds(ref.duration),
@@ -206,7 +235,7 @@ fun LpVideoRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!ref.uploaderName.isNullOrBlank()) {
+            if (showChannel && !ref.uploaderName.isNullOrBlank()) {
                 Text(
                     text = ref.uploaderName,
                     style = MaterialTheme.typography.bodySmall,
@@ -225,14 +254,18 @@ fun LpVideoRow(
                 LpLinearProgress(progress = progress)
             }
         }
-        Icon(
-            Icons.Rounded.MoreVert,
-            contentDescription = null,
-            tint = colors.onSurfaceVariant,
-            modifier = Modifier
-                .size(48.dp)
-                .padding(14.dp),
-        )
+        if (showMenu) {
+            Icon(
+                Icons.Rounded.MoreVert,
+                contentDescription = if (onMenuClick != null) "More options" else null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .then(if (onMenuClick != null) Modifier.clickable(onClick = onMenuClick) else Modifier)
+                    .padding(14.dp),
+            )
+        }
     }
 }
 
@@ -245,6 +278,8 @@ fun LpChannelRow(
     subtitle: String? = null,
     trailingLabel: String? = null,
     onTrailingClick: (() -> Unit)? = null,
+    /** Render the trailing action as a filled call-to-action instead of an outlined pill. */
+    trailingFilled: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -280,11 +315,22 @@ fun LpChannelRow(
             }
         }
         if (trailingLabel != null) {
-            LpPillButton(
-                text = trailingLabel,
-                onClick = onTrailingClick ?: {},
-                modifier = Modifier.padding(start = 12.dp),
-            )
+            val trailingModifier = Modifier.padding(start = 12.dp)
+            if (trailingFilled) {
+                LpFilledButton(
+                    text = trailingLabel,
+                    onClick = onTrailingClick ?: {},
+                    modifier = trailingModifier,
+                )
+            } else {
+                // Same 40dp/labelLarge geometry as the filled state, so toggling
+                // subscribe changes the fill and nothing else.
+                LpOutlinedButton(
+                    text = trailingLabel,
+                    onClick = onTrailingClick ?: {},
+                    modifier = trailingModifier,
+                )
+            }
         }
     }
 }
@@ -296,6 +342,7 @@ fun LpPlaylistRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    thumbnailWidth: Dp = 96.dp,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
@@ -310,7 +357,8 @@ fun LpPlaylistRow(
                 model = playlist.thumbnailUrl,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(width = 96.dp, height = 54.dp)
+                    .width(thumbnailWidth)
+                    .aspectRatio(16f / 9f)
                     .clip(ShapeTokens.md),
                 contentScale = ContentScale.Crop,
             )

@@ -9,6 +9,7 @@ import app.librepipes.data.repo.HistoryRepository
 import app.librepipes.data.repo.PlaylistRepository
 import app.librepipes.data.repo.SearchHistoryRepository
 import app.librepipes.data.repo.SubscriptionRepository
+import app.librepipes.data.update.UpdateRepository
 import app.librepipes.download.DownloadManager
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -36,6 +37,10 @@ class AppContainer(context: Context) {
 
     val settings: SettingsRepository by lazy {
         SettingsRepository(appContext)
+    }
+
+    val updates: UpdateRepository by lazy {
+        UpdateRepository(appContext, okHttpClient)
     }
 
     val subscriptions: SubscriptionRepository by lazy {

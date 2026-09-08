@@ -14,6 +14,11 @@ app/build
 *.aab
 .freebuff
 
+# Release signing — never commit key material
+keystore.properties
+*.jks
+*.keystore
+
 # Agent/tool scratch (opencode skills)
 .agents/
 skills-lock.json

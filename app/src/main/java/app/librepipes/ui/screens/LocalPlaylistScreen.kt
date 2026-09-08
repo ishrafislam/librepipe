@@ -27,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.librepipes.data.model.StreamRef
+import app.librepipes.ui.components.VideoMenuHost
+import app.librepipes.ui.components.rememberVideoMenuController
 import app.librepipes.ui.components.kit.LpDialog
 import app.librepipes.ui.components.kit.LpEmptyState
 import app.librepipes.ui.components.kit.LpIconAction
@@ -39,9 +41,11 @@ import app.librepipes.ui.viewmodels.LocalPlaylistViewModel
 fun LocalPlaylistScreen(
     vm: LocalPlaylistViewModel,
     onBack: () -> Unit,
-    onOpenVideo: (StreamRef, List<StreamRef>) -> Unit,
+    onOpenVideo: (StreamRef) -> Unit,
 ) {
     val name = vm.name
+    val videoMenu = rememberVideoMenuController()
+    VideoMenuHost(videoMenu)
     val items = vm.items
     var showRename by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf(name) }
@@ -89,7 +93,7 @@ fun LocalPlaylistScreen(
                 }
                 item {
                     TextButton(
-                        onClick = { onOpenVideo(refs.first(), refs) },
+                        onClick = { onOpenVideo(refs.first()) },
                         modifier = Modifier.padding(horizontal = 8.dp),
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -99,10 +103,10 @@ fun LocalPlaylistScreen(
                 items(items, key = { it.id }) { item ->
                     val ref = StreamRef.fromJson(item.streamJson)
                     if (ref != null) {
-                        val index = items.indexOf(item)
                         LpVideoRow(
                             ref = ref,
-                            onClick = { onOpenVideo(ref, refs.drop(index)) },
+                            onClick = { onOpenVideo(ref) },
+                            onMenuClick = { videoMenu.open(ref) },
                             onLongPress = { vm.removeItem(item.id) },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         )

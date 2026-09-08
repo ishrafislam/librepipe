@@ -1,14 +1,24 @@
 package app.librepipes.ui
 
 import android.content.Context
+import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.util.Rational
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -33,15 +43,23 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -51,12 +69,14 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.librepipes.LibrePipeApp
 import app.librepipes.data.model.StreamRef
-import app.librepipes.player.NowPlayingActivity
+import app.librepipes.player.EXTRA_WATCH_URL
 import app.librepipes.player.PlaybackOpener
+import app.librepipes.player.WatchRequest
 import app.librepipes.player.PopupLauncher
 import app.librepipes.ui.components.kit.LpBottomBar
 import app.librepipes.ui.components.kit.LpMiniPlayer
 import app.librepipes.ui.components.kit.LpNavItem
+import app.librepipes.ui.components.kit.LpSplashScreen
 import app.librepipes.ui.screens.ChannelScreen
 import app.librepipes.ui.screens.DownloadsScreen
 import app.librepipes.ui.screens.HistoryScreen
@@ -67,7 +87,10 @@ import app.librepipes.ui.screens.PlaylistScreen
 import app.librepipes.ui.screens.SearchScreen
 import app.librepipes.ui.screens.SettingsScreen
 import app.librepipes.ui.screens.SubscriptionsScreen
+import app.librepipes.ui.screens.UpdatePrompt
+import app.librepipes.ui.screens.WatchScreen
 import app.librepipes.ui.theme.LibrePipeTheme
+import app.librepipes.ui.theme.Motion
 import app.librepipes.ui.viewmodels.ChannelViewModel
 import app.librepipes.ui.viewmodels.DownloadsViewModel
 import app.librepipes.ui.viewmodels.HistoryViewModel
@@ -79,9 +102,13 @@ import app.librepipes.ui.viewmodels.PlaylistViewModel
 import app.librepipes.ui.viewmodels.SearchViewModel
 import app.librepipes.ui.viewmodels.SettingsViewModel
 import app.librepipes.ui.viewmodels.SubscriptionsViewModel
+import app.librepipes.ui.viewmodels.UpdateViewModel
+import app.librepipes.ui.viewmodels.WatchViewModel
 import app.librepipes.ui.viewmodels.appViewModel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 
 object Routes {
     const val HOME = "home"
@@ -94,7 +121,9 @@ object Routes {
     const val CHANNEL = "channel/{url}"
     const val PLAYLIST = "playlist/{url}"
     const val LOCAL_PLAYLIST = "localplaylist/{id}"
+    const val WATCH = "watch/{url}"
 
+    fun watch(url: String) = "watch/${Uri.encode(url)}"
     fun channel(url: String) = "channel/${Uri.encode(url)}"
     fun playlist(url: String) = "playlist/${Uri.encode(url)}"
     fun localPlaylist(id: Long) = "localplaylist/$id"
@@ -103,15 +132,29 @@ object Routes {
 class MainActivity : ComponentActivity() {
 
     private var deepLink by mutableStateOf<String?>(null)
+    private var watchUrl by mutableStateOf<String?>(null)
+
+    /** True while the system has us in a picture-in-picture window. */
+    private var pipMode by mutableStateOf(false)
+
+    /** Set by the watch route so onUserLeaveHint knows PiP is meaningful right now. */
+    private var watchActive = false
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private var pendingUpdateApk: File? = null
+    private val unknownSourcesLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            installPendingUpdateIfAllowed()
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         deepLink = extractYoutubeUrl(intent)
+        watchUrl = intent.getStringExtra(EXTRA_WATCH_URL)
 
         setContent {
             val app = application as LibrePipeApp
@@ -123,11 +166,31 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
             LibrePipeTheme(darkTheme = darkTheme, dynamicColor = dynamicColorPref) {
-                MainScreen(
-                    deepLink = deepLink,
-                    onRequestNotificationPermission = { requestNotificationPermission() },
-                    onDeepLinkConsumed = { deepLink = null },
-                )
+                var showSplash by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    delay(400)
+                    showSplash = false
+                }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    MainScreen(
+                        deepLink = deepLink,
+                        watchUrl = watchUrl,
+                        pipMode = pipMode,
+                        onRequestNotificationPermission = { requestNotificationPermission() },
+                        onDeepLinkConsumed = { deepLink = null },
+                        onWatchUrlConsumed = { watchUrl = null },
+                        onWatchActiveChanged = { watchActive = it },
+                        onEnterPip = { enterPip() },
+                        onFullscreenChanged = { setFullscreen(it) },
+                        onInstallUpdate = { requestUpdateInstall(it) },
+                    )
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        exit = fadeOut(animationSpec = tween(500, easing = Motion.Emphasized)),
+                    ) {
+                        LpSplashScreen(Modifier.fillMaxSize())
+                    }
+                }
             }
         }
     }
@@ -136,16 +199,87 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         extractYoutubeUrl(intent)?.let { deepLink = it }
+        intent.getStringExtra(EXTRA_WATCH_URL)?.let { watchUrl = it }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (watchActive) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipMode = isInPictureInPictureMode
+    }
+
+    private fun enterPip() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
+        runCatching {
+            enterPictureInPictureMode(
+                PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build(),
+            )
+        }
+    }
+
+    /** Landscape + hidden system bars, restored on exit. */
+    private fun setFullscreen(on: Boolean) {
+        requestedOrientation = if (on) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        if (on) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     override fun onResume() {
         super.onResume()
         PopupLauncher.consumePending(this)
+        installPendingUpdateIfAllowed()
     }
 
     private fun requestNotificationPermission() {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun requestUpdateInstall(path: String) {
+        val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return
+        val updateDir = runCatching { File(cacheDir, "updates").canonicalFile }.getOrNull() ?: return
+        if (!file.exists() || file.parentFile != updateDir) return
+        pendingUpdateApk = file
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            )
+            unknownSourcesLauncher.launch(intent)
+        } else {
+            installPendingUpdateIfAllowed()
+        }
+    }
+
+    private fun installPendingUpdateIfAllowed() {
+        val file = pendingUpdateApk ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        if (!file.exists()) {
+            pendingUpdateApk = null
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (intent.resolveActivity(packageManager) != null) {
+            pendingUpdateApk = null
+            startActivity(intent)
         }
     }
 
@@ -164,8 +298,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MainScreen(
     deepLink: String?,
+    watchUrl: String?,
+    pipMode: Boolean,
     onRequestNotificationPermission: () -> Unit,
     onDeepLinkConsumed: () -> Unit,
+    onWatchUrlConsumed: () -> Unit,
+    onWatchActiveChanged: (Boolean) -> Unit,
+    onEnterPip: () -> Unit,
+    onFullscreenChanged: (Boolean) -> Unit,
+    onInstallUpdate: (String) -> Unit,
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -175,16 +316,28 @@ private fun MainScreen(
 
     val app = context.applicationContext as LibrePipeApp
     val unreadCount by app.container.subscriptions.observeUnreadCount().collectAsState(initial = 0)
+    val updateVm: UpdateViewModel = appViewModel { UpdateViewModel(it) }
+
+    LaunchedEffect(Unit) { updateVm.check(manual = false) }
 
     LaunchedEffect(deepLink) {
         if (deepLink != null) {
-            handleDeepLink(context, deepLink, navController, scope)
+            handleDeepLink(deepLink, navController)
             onDeepLinkConsumed()
         }
     }
+    LaunchedEffect(watchUrl) {
+        if (watchUrl != null) {
+            navController.navigate(Routes.watch(watchUrl))
+            onWatchUrlConsumed()
+        }
+    }
 
-    val openVideo: (StreamRef, List<StreamRef>) -> Unit = { ref, queue ->
-        scope.launch { PlaybackOpener.playFull(context, ref, queue) }
+    // One video, never its neighbours: the queue is only what the user adds from a
+    // list's overflow menu.
+    val openVideo: (StreamRef) -> Unit = { ref ->
+        WatchRequest.set(ref, emptyList())
+        navController.navigate(Routes.watch(ref.url))
     }
     val openChannel: (String) -> Unit = { url -> navController.navigate(Routes.channel(url)) }
     val openPlaylist: (String) -> Unit = { url -> navController.navigate(Routes.playlist(url)) }
@@ -193,12 +346,11 @@ private fun MainScreen(
     }
     val openSearch: () -> Unit = { navController.navigate(Routes.SEARCH) }
 
+    // No queue here on purpose: the session already holds one, and startSession keeps
+    // an existing timeline when the id matches.
     val openMiniPlayer: (StreamRef) -> Unit = { ref ->
-        context.startActivity(
-            Intent(context, NowPlayingActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, ref.toJson())
-        )
+        WatchRequest.set(ref, emptyList())
+        navController.navigate(Routes.watch(ref.url))
     }
 
     val onNavigate: (String) -> Unit = { route ->
@@ -209,14 +361,64 @@ private fun MainScreen(
         }
     }
 
-    val tabRoutes = listOf(Routes.HOME, Routes.SUBSCRIPTIONS, Routes.LIBRARY, Routes.SETTINGS)
-    val selectedIndex = tabRoutes.indexOf(currentRoute)
+    val onWatchRoute = currentRoute == Routes.WATCH
+    var fullscreen by remember { mutableStateOf(false) }
+    var locked by remember { mutableStateOf(false) }
+    // Rotating to landscape while watching enters fullscreen on its own; leaving the
+    // route or returning to portrait exits it.
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    LaunchedEffect(onWatchRoute, landscape) {
+        if (!onWatchRoute) {
+            fullscreen = false
+            locked = false
+        } else if (landscape) {
+            fullscreen = true
+        }
+    }
+    LaunchedEffect(fullscreen) { onFullscreenChanged(fullscreen) }
+    LaunchedEffect(onWatchRoute) { onWatchActiveChanged(onWatchRoute) }
 
+    val tabRoutes = listOf(Routes.HOME, Routes.SUBSCRIPTIONS, Routes.LIBRARY, Routes.SETTINGS)
+    // Search is pushed from Home, so Home stays the active tab while searching.
+    val selectedIndex = when (currentRoute) {
+        Routes.SEARCH -> 0
+        else -> tabRoutes.indexOf(currentRoute)
+    }
+
+    // One controller for the whole app shell: the mini player renders from it, and the
+    // per-video menus read `visible` to decide whether a queue exists to add to. Built
+    // here rather than inside MiniPlayerHost, which is not composed on the watch route.
+    val miniPlayerVm: MiniPlayerViewModel = appViewModel { MiniPlayerViewModel(it) }
+    val sessionState by miniPlayerVm.uiState.collectAsState()
+
+    CompositionLocalProvider(LocalSessionActive provides sessionState.visible) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
-        if (wide) {
+        if (fullscreen || pipMode) {
+            // No app chrome at all: landscape crosses the 840dp threshold, so without
+            // this the wide layout would put the nav rail beside a "fullscreen" video.
+            AppNavHost(
+                navController = navController,
+                modifier = Modifier.fillMaxSize(),
+                openVideo = openVideo,
+                openChannel = openChannel,
+                openPlaylist = openPlaylist,
+                openSearch = openSearch,
+                playUri = playUri,
+                onRequestNotificationPermission = onRequestNotificationPermission,
+                fullscreen = fullscreen,
+                pipMode = pipMode,
+                onEnterPip = onEnterPip,
+                onToggleFullscreen = { fullscreen = !fullscreen },
+                locked = locked,
+                onSetLocked = { locked = it },
+                updateVm = updateVm,
+            )
+        } else if (wide) {
             Row(modifier = Modifier.fillMaxSize()) {
-                NavRail(currentRoute = currentRoute, onNavigate = onNavigate, unreadCount = unreadCount)
+                if (!onWatchRoute) {
+                    NavRail(currentRoute = currentRoute, onNavigate = onNavigate, unreadCount = unreadCount)
+                }
                 Column(modifier = Modifier.fillMaxSize()) {
                     AppNavHost(
                         navController = navController,
@@ -227,20 +429,31 @@ private fun MainScreen(
                         openSearch = openSearch,
                         playUri = playUri,
                         onRequestNotificationPermission = onRequestNotificationPermission,
+                        fullscreen = fullscreen,
+                        pipMode = pipMode,
+                        onEnterPip = onEnterPip,
+                        onToggleFullscreen = { fullscreen = !fullscreen },
+                        locked = locked,
+                        onSetLocked = { locked = it },
+                        updateVm = updateVm,
                     )
-                    MiniPlayerHost(onOpen = openMiniPlayer)
+                    if (!onWatchRoute) MiniPlayerHost(miniPlayerVm, sessionState, onOpen = openMiniPlayer)
                 }
             }
         } else {
             Scaffold(
                 bottomBar = {
-                    Column {
-                        MiniPlayerHost(onOpen = openMiniPlayer)
-                        LpBottomBar(
-                            items = bottomNavItems(unreadCount),
-                            selectedIndex = selectedIndex,
-                            onSelect = { index -> onNavigate(tabRoutes[index]) },
-                        )
+                    // The watch page is the player; a mini player under it would be
+                    // duplicate chrome, and fullscreen/PiP want the whole window.
+                    if (!onWatchRoute && !pipMode) {
+                        Column {
+                            MiniPlayerHost(miniPlayerVm, sessionState, onOpen = openMiniPlayer)
+                            LpBottomBar(
+                                items = bottomNavItems(unreadCount),
+                                selectedIndex = selectedIndex,
+                                onSelect = { index -> onNavigate(tabRoutes[index]) },
+                            )
+                        }
                     }
                 },
             ) { padding ->
@@ -253,16 +466,30 @@ private fun MainScreen(
                     openSearch = openSearch,
                     playUri = playUri,
                     onRequestNotificationPermission = onRequestNotificationPermission,
+                    fullscreen = fullscreen,
+                    pipMode = pipMode,
+                    onEnterPip = onEnterPip,
+                    onToggleFullscreen = { fullscreen = !fullscreen },
+                    locked = locked,
+                    onSetLocked = { locked = it },
+                    updateVm = updateVm,
                 )
             }
         }
     }
+    UpdatePrompt(vm = updateVm, onInstall = onInstallUpdate)
+    }
 }
 
+/** Whether a playback session is live, for menus that offer "Add to queue". */
+val LocalSessionActive = staticCompositionLocalOf { false }
+
 @Composable
-private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
-    val vm: MiniPlayerViewModel = appViewModel { MiniPlayerViewModel(it) }
-    val state by vm.uiState.collectAsState()
+private fun MiniPlayerHost(
+    vm: MiniPlayerViewModel,
+    state: MiniPlayerViewModel.UiState,
+    onOpen: (StreamRef) -> Unit,
+) {
     val ref = state.ref
     if (!state.visible || ref == null) return
     LpMiniPlayer(
@@ -271,6 +498,9 @@ private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
         thumbnailUrl = state.thumbnailUrl,
         progress = state.progress,
         onClick = { onOpen(ref) },
+        isPlaying = state.isPlaying,
+        isLive = state.isLive,
+        onPlayPause = vm::playPause,
         onClose = vm::stop,
     )
 }
@@ -279,12 +509,19 @@ private fun MiniPlayerHost(onOpen: (StreamRef) -> Unit) {
 private fun AppNavHost(
     navController: NavHostController,
     modifier: Modifier = Modifier,
-    openVideo: (StreamRef, List<StreamRef>) -> Unit,
+    openVideo: (StreamRef) -> Unit,
     openChannel: (String) -> Unit,
     openPlaylist: (String) -> Unit,
     openSearch: () -> Unit,
     playUri: (Uri, String) -> Unit,
     onRequestNotificationPermission: () -> Unit,
+    fullscreen: Boolean,
+    pipMode: Boolean,
+    onEnterPip: () -> Unit,
+    onToggleFullscreen: () -> Unit,
+    locked: Boolean,
+    onSetLocked: (Boolean) -> Unit,
+    updateVm: UpdateViewModel,
 ) {
     NavHost(
         navController = navController,
@@ -292,7 +529,34 @@ private fun AppNavHost(
         modifier = modifier,
     ) {
         composable(Routes.HOME) {
-            HomeScreen(appViewModel { HomeViewModel(it) }, openVideo, openChannel, openSearch)
+            HomeScreen(appViewModel { HomeViewModel(it) }, openVideo, openSearch)
+        }
+        composable(
+            Routes.WATCH,
+            arguments = listOf(navArgument("url") { type = NavType.StringType }),
+        ) { entry ->
+            val url = Uri.decode(entry.arguments?.getString("url").orEmpty())
+            val request = remember(url) { WatchRequest.take(url) }
+            val ref = request?.first ?: StreamRef(
+                id = url.substringAfterLast("v="),
+                title = "",
+                url = url,
+            )
+            val initialQueue = request?.second
+                ?.distinctBy { it.id }
+                ?.takeIf { it.isNotEmpty() }
+                ?: listOf(ref)
+            WatchScreen(
+                vm = appViewModel { WatchViewModel(it, ref, initialQueue) },
+                fullscreen = fullscreen,
+                pipMode = pipMode,
+                locked = locked,
+                onMinimize = { navController.popBackStack() },
+                onEnterPip = onEnterPip,
+                onToggleFullscreen = onToggleFullscreen,
+                onSetLocked = onSetLocked,
+                onOpenChannel = openChannel,
+            )
         }
         composable(Routes.SEARCH) {
             SearchScreen(
@@ -327,11 +591,17 @@ private fun AppNavHost(
             )
         }
         composable(Routes.SUBSCRIPTIONS) {
-            SubscriptionsScreen(appViewModel { SubscriptionsViewModel(it) }, openChannel, openSearch)
+            SubscriptionsScreen(
+                appViewModel { SubscriptionsViewModel(it) },
+                openVideo,
+                openChannel,
+                openSearch,
+            )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 vm = appViewModel { SettingsViewModel(it) },
+                updateVm = updateVm,
                 onRequestNotificationPermission = onRequestNotificationPermission,
             )
         }
@@ -344,6 +614,8 @@ private fun AppNavHost(
                 vm = appViewModel { ChannelViewModel(it, url) },
                 onBack = { navController.popBackStack() },
                 onOpenVideo = openVideo,
+                onOpenSearch = openSearch,
+                onOpenPlaylist = openPlaylist,
             )
         }
         composable(
@@ -354,7 +626,10 @@ private fun AppNavHost(
             PlaylistScreen(
                 vm = appViewModel { PlaylistViewModel(it, url) },
                 onBack = { navController.popBackStack() },
-                onOpenVideo = openVideo,
+                onPlayQueue = { selected, queue ->
+                    WatchRequest.set(selected, queue)
+                    navController.navigate(Routes.watch(selected.url))
+                },
             )
         }
         composable(
@@ -395,16 +670,14 @@ private fun NavRail(currentRoute: String?, onNavigate: (String) -> Unit, unreadC
 
 private fun bottomNavItems(unreadCount: Int) = listOf(
     LpNavItem("Home", Icons.Outlined.Home, Icons.Rounded.Home),
-    LpNavItem("Subscriptions", Icons.Outlined.Subscriptions, Icons.Rounded.Subscriptions, unreadCount = unreadCount),
+    LpNavItem("Subs", Icons.Outlined.Subscriptions, Icons.Rounded.Subscriptions, unreadCount = unreadCount),
     LpNavItem("Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
     LpNavItem("Settings", Icons.Outlined.Settings, Icons.Rounded.Settings),
 )
 
 private fun handleDeepLink(
-    context: Context,
     url: String,
     navController: NavHostController,
-    scope: CoroutineScope,
 ) {
     val uri = Uri.parse(url)
     val host = uri.host.orEmpty()
@@ -419,12 +692,7 @@ private fun handleDeepLink(
         else -> null
     }
     if (videoId != null) {
-        val ref = StreamRef(
-            id = videoId,
-            title = "",
-            url = "https://www.youtube.com/watch?v=$videoId",
-        )
-        scope.launch { PlaybackOpener.playFull(context, ref) }
+        navController.navigate(Routes.watch("https://www.youtube.com/watch?v=$videoId"))
         return
     }
 

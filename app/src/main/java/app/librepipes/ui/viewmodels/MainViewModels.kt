@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import app.librepipes.data.db.SearchHistoryEntity
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.ChannelRef
+import app.librepipes.data.model.DownloadState
 import app.librepipes.data.model.PlaylistRef
 import app.librepipes.data.model.StreamRef
 import app.librepipes.di.AppContainer
@@ -21,20 +22,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.IOException
 
 // ---------------------------------------------------------------------- Home
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
-    data class HomeSection(val channel: ChannelRef, val videos: List<StreamRef>)
-
     data class UiState(
         val loading: Boolean = true,
         val error: AppError? = null,
-        val sections: List<HomeSection> = emptyList(),
-        val trending: List<StreamRef> = emptyList(),
+        /** Subscription uploads merged with region-popular videos, deduped. */
+        val feed: List<StreamRef> = emptyList(),
         val hasSubscriptions: Boolean = false,
-        val inProgress: List<StreamRef> = emptyList(),
+        val inProgressIds: Set<String> = emptySet(),
         val downloadedIds: Set<String> = emptySet(),
         val progressById: Map<String, Float> = emptyMap(),
     )
@@ -45,22 +47,23 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             container.history.observeRecent(100).collect { history ->
-                val inProgress = history.mapNotNull { entry ->
-                    StreamRef.fromJson(entry.streamJson)?.takeIf {
-                        entry.durationMs > 0 && entry.positionMs > 0 &&
-                            entry.durationMs - entry.positionMs > 15_000
-                    }
+                val unfinished = history.filter { entry ->
+                    entry.durationMs > 0 && entry.positionMs > 0 &&
+                        entry.durationMs - entry.positionMs > 15_000
                 }
-                val progressById = inProgress.associate { ref ->
-                    val entry = history.firstOrNull { it.streamId == ref.id }
-                    ref.id to ((entry?.positionMs ?: 0L).toFloat() / (entry?.durationMs ?: 1L).coerceAtLeast(1L))
+                val inProgressIds = unfinished.map { it.streamId }.toSet()
+                val progressById = unfinished.associate { entry ->
+                    entry.streamId to (entry.positionMs.toFloat() / entry.durationMs.coerceAtLeast(1L))
                 }
-                _uiState.update { it.copy(inProgress = inProgress, progressById = progressById) }
+                _uiState.update { it.copy(inProgressIds = inProgressIds, progressById = progressById) }
             }
         }
         viewModelScope.launch {
             container.downloads.observeAll().collect { downloads ->
-                val ids = downloads.mapNotNull { StreamRef.fromJson(it.streamJson)?.id }.toSet()
+                val ids = downloads
+                    .filter { it.state == DownloadState.DONE.name }
+                    .mapNotNull { StreamRef.fromJson(it.streamJson)?.id }
+                    .toSet()
                 _uiState.update { it.copy(downloadedIds = ids) }
             }
         }
@@ -72,31 +75,46 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             _uiState.update { it.copy(loading = true, error = null) }
             try {
                 val subs = container.subscriptions.getAll()
-                if (subs.isEmpty()) {
-                    val trending = runCatching { Extractor.trending() }.getOrDefault(emptyList())
-                    _uiState.update {
-                        it.copy(loading = false, hasSubscriptions = false, sections = emptyList(), trending = trending)
+                val feed = coroutineScope {
+                    val popular = async {
+                        runCatching { Extractor.trending() }.getOrDefault(emptyList())
                     }
-                } else {
-                    val sections = coroutineScope {
-                        subs.take(12).map { sub ->
-                            async {
-                                runCatching {
-                                    val feed = Extractor.channel(sub.channelUrl)
-                                    feed.loadInitial()
-                                    HomeSection(feed.channel, feed.videos.take(6))
-                                }.getOrNull()
-                            }
-                        }.awaitAll().filterNotNull()
-                    }
-                    _uiState.update {
-                        it.copy(loading = false, hasSubscriptions = true, sections = sections, trending = emptyList())
-                    }
+                    val channels = subs.take(12).map { sub ->
+                        async {
+                            runCatching {
+                                val channel = Extractor.channel(sub.channelUrl)
+                                channel.loadInitial()
+                                // ChannelFeed already stamps the owner; the stored
+                                // subscription only backfills a header we failed to parse.
+                                channel.videos.take(6).map {
+                                    it.copy(uploaderAvatarUrl = it.uploaderAvatarUrl ?: sub.avatarUrl)
+                                }
+                            }.getOrNull()
+                        }
+                    }.awaitAll().filterNotNull()
+                    (interleave(channels) + popular.await()).distinctBy { it.id }
+                }
+                _uiState.update {
+                    it.copy(loading = false, hasSubscriptions = subs.isNotEmpty(), feed = feed)
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(loading = false, error = e.toAppError()) }
             }
         }
+    }
+
+    /**
+     * Round-robin flatten: one video per channel, then the next from each. A plain
+     * flatten would stack the first channel's whole upload run at the top of the feed.
+     */
+    private fun interleave(lists: List<List<StreamRef>>): List<StreamRef> {
+        if (lists.isEmpty()) return emptyList()
+        val out = ArrayList<StreamRef>(lists.sumOf { it.size })
+        val longest = lists.maxOf { it.size }
+        for (i in 0 until longest) {
+            for (list in lists) list.getOrNull(i)?.let { out += it }
+        }
+        return out
     }
 }
 
@@ -104,7 +122,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
 class SearchViewModel(private val container: AppContainer) : ViewModel() {
 
+    /** Which of the three views the screen shows. Explicit, never inferred from the data. */
+    enum class Mode { RECENTS, SUGGESTIONS, RESULTS }
+
     var query by mutableStateOf("")
+        private set
+    var mode by mutableStateOf(Mode.RECENTS)
         private set
     var suggestions by mutableStateOf<List<String>>(emptyList())
         private set
@@ -116,11 +139,9 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         private set
     var hasMore by mutableStateOf(false)
         private set
-    var activeFilter by mutableStateOf(Extractor.SearchFilter.ALL)
-        private set
-    var searched by mutableStateOf(false)
-        private set
     var recents by mutableStateOf<List<SearchHistoryEntity>>(emptyList())
+        private set
+    var subscribedUrls by mutableStateOf<Set<String>>(emptySet())
         private set
 
     private var feed: Extractor.SearchFeed? = null
@@ -129,6 +150,21 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             container.searchHistory.observeRecent(12).collect { recents = it }
+        }
+        viewModelScope.launch {
+            container.subscriptions.observeAll().collect { subs ->
+                subscribedUrls = subs.map { it.channelUrl }.toSet()
+            }
+        }
+    }
+
+    fun toggleSubscribe(channel: ChannelRef) {
+        viewModelScope.launch {
+            if (channel.url in subscribedUrls) {
+                container.subscriptions.unsubscribe(channel.url)
+            } else {
+                container.subscriptions.subscribe(channel)
+            }
         }
     }
 
@@ -140,36 +176,43 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.searchHistory.clear() }
     }
 
+    /** Typing only ever moves between RECENTS and SUGGESTIONS — never into results. */
     fun onQueryChange(newQuery: String) {
         query = newQuery
-        searched = false
         suggestionJob?.cancel()
         if (newQuery.isBlank()) {
+            mode = Mode.RECENTS
             suggestions = emptyList()
             return
         }
+        mode = Mode.SUGGESTIONS
         suggestionJob = viewModelScope.launch {
             delay(250)
             suggestions = runCatching { Extractor.suggestions(newQuery) }.getOrDefault(emptyList())
         }
     }
 
-    fun search(filter: Extractor.SearchFilter = activeFilter) {
-        val q = query.trim()
+    /** Tapping a suggestion or a recent: search it directly, with no debounce job spawned. */
+    fun onSuggestionClick(suggestion: String) = search(suggestion)
+
+    fun search(newQuery: String = query) {
+        val q = newQuery.trim()
         if (q.isBlank()) return
-        activeFilter = filter
+        // Cancel first, or an in-flight suggestions fetch lands after the results.
+        suggestionJob?.cancel()
+        query = q
         suggestions = emptyList()
+        mode = Mode.RESULTS
         viewModelScope.launch {
             container.searchHistory.add(q)
             loading = true
             error = null
             try {
-                val f = Extractor.search(q, filter)
+                val f = Extractor.search(q, Extractor.SearchFilter.ALL)
                 f.loadInitial()
                 feed = f
                 items = f.items.toList()
                 hasMore = f.hasMore
-                searched = true
             } catch (e: Exception) {
                 error = e.toAppError()
             } finally {
@@ -212,6 +255,13 @@ class ChannelViewModel(
         private set
     var subscribed by mutableStateOf(false)
         private set
+    var playlists by mutableStateOf<List<PlaylistRef>>(emptyList())
+        private set
+    var playlistsLoading by mutableStateOf(false)
+        private set
+    /** Whether the channel offers a playlists tab at all. */
+    var hasPlaylists by mutableStateOf(false)
+        private set
 
     private var feed: Extractor.ChannelFeed? = null
 
@@ -234,6 +284,7 @@ class ChannelViewModel(
                 feed = f
                 channel = f.channel
                 videos = f.videos.toList()
+                hasPlaylists = f.hasPlaylists
             } catch (e: Exception) {
                 error = e.toAppError()
             } finally {
@@ -250,6 +301,17 @@ class ChannelViewModel(
             val ok = runCatching { f.loadMore() }.getOrDefault(false)
             if (ok) videos = f.videos.toList()
             loadingMore = false
+        }
+    }
+
+    /** Called the first time the playlists tab is opened; the feed caches the result. */
+    fun loadPlaylists() {
+        val f = feed ?: return
+        if (playlistsLoading || playlists.isNotEmpty()) return
+        viewModelScope.launch {
+            playlistsLoading = true
+            playlists = runCatching { f.loadPlaylists() }.getOrDefault(emptyList())
+            playlistsLoading = false
         }
     }
 
@@ -282,8 +344,14 @@ class PlaylistViewModel(
         private set
     var error by mutableStateOf<AppError?>(null)
         private set
+    var preparingQueue by mutableStateOf(false)
+        private set
+    var queuePreparationError by mutableStateOf<AppError?>(null)
+        private set
 
     private var feed: Extractor.PlaylistFeed? = null
+    private val paginationMutex = Mutex()
+    private var retrySelectionId: String? = null
 
     init {
         load()
@@ -309,12 +377,52 @@ class PlaylistViewModel(
 
     fun loadMore() {
         val f = feed ?: return
-        if (!f.hasMore || loadingMore) return
+        if (!f.hasMore || loadingMore || preparingQueue) return
         viewModelScope.launch {
             loadingMore = true
-            val ok = runCatching { f.loadMore() }.getOrDefault(false)
-            if (ok) videos = f.videos.toList()
+            paginationMutex.withLock {
+                val ok = runCatching { if (f.hasMore) f.loadMore() else false }.getOrDefault(false)
+                if (ok) videos = f.videos.toList()
+            }
             loadingMore = false
         }
+    }
+
+    fun playAll(onReady: (StreamRef, List<StreamRef>) -> Unit) {
+        val first = videos.firstOrNull() ?: return
+        playFrom(first, onReady)
+    }
+
+    fun playFrom(
+        selected: StreamRef,
+        onReady: (StreamRef, List<StreamRef>) -> Unit,
+    ) {
+        val f = feed ?: return
+        if (preparingQueue || videos.none { it.id == selected.id }) return
+        preparingQueue = true
+        queuePreparationError = null
+        retrySelectionId = selected.id
+        viewModelScope.launch {
+            try {
+                val queue = paginationMutex.withLock {
+                    while (f.hasMore) {
+                        if (!f.loadMore()) throw IOException("Playlist continuation did not load")
+                        videos = f.videos.toList()
+                    }
+                    f.videos.distinctBy { it.id }
+                }
+                val queueSelection = queue.firstOrNull { it.id == selected.id }
+                if (queueSelection != null) onReady(queueSelection, queue)
+            } catch (e: Exception) {
+                queuePreparationError = e.toAppError()
+            } finally {
+                preparingQueue = false
+            }
+        }
+    }
+
+    fun retryPlay(onReady: (StreamRef, List<StreamRef>) -> Unit) {
+        val selected = retrySelectionId?.let { id -> videos.firstOrNull { it.id == id } } ?: return
+        playFrom(selected, onReady)
     }
 }

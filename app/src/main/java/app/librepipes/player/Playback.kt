@@ -3,6 +3,7 @@ package app.librepipes.player
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -23,6 +24,7 @@ import java.util.Locale
 object Playback {
 
     const val EXTRA_REF_JSON = "stream_ref_json"
+
     const val MAX_QUEUE = 40
 
     data class Resolved(
@@ -33,6 +35,8 @@ object Playback {
         val subtitlesAvailable: Boolean,
         /** Epoch millis when the first item goes live (premiere/countdown). */
         val premiereAt: Long? = null,
+        /** Shared so callers don't issue a second player request for the same video. */
+        val streamInfo: StreamInfo? = null,
     )
 
     /** Resolves the first stream plus the queue into playable media items. */
@@ -40,7 +44,6 @@ object Playback {
         val container = (context.applicationContext as LibrePipeApp).container
         val settings = container.settings.snapshot()
         val audioOnly = settings.audioOnly || first.isAudio
-        val captionsOn = settings.captionsEnabled && !audioOnly
 
         val streamInfo = Extractor.stream(first.url)
 
@@ -63,13 +66,13 @@ object Playback {
             } ?: 0L
         } else 0L
 
-        val items = mutableListOf(buildItem(streamInfo, first, audioOnly, captionsOn, settings.maxQuality))
+        val items = mutableListOf(buildItem(streamInfo, first, audioOnly, settings.maxQuality))
 
         val remaining = queue.filter { it.id != first.id }.take(MAX_QUEUE)
         for (ref in remaining) {
             val item = runCatching {
                 val info = Extractor.stream(ref.url)
-                if (info.premiereAt != null) null else buildItem(info, ref, audioOnly, captionsOn, settings.maxQuality)
+                if (info.premiereAt != null) null else buildItem(info, ref, audioOnly, settings.maxQuality)
             }.getOrNull()
             if (item != null) items += item
         }
@@ -80,17 +83,27 @@ object Playback {
             startPosition = startPosition,
             audioOnly = audioOnly,
             subtitlesAvailable = streamInfo.subtitles.isNotEmpty(),
+            streamInfo = streamInfo,
         )
     }
 
-    private fun buildItem(
+    /**
+     * What to play. [isManifest] items are DASH and need an explicit MIME type, since a
+     * data: URI carries no extension for Media3 to infer from.
+     */
+    data class Selection(val uri: String, val isManifest: Boolean, val height: Int)
+
+    fun buildItem(
         info: StreamInfo,
         ref: StreamRef,
         audioOnly: Boolean,
-        captionsOn: Boolean,
         maxHeight: Int,
+        /** Skip the manifest and use the progressive stream — the runtime fallback path. */
+        forceProgressive: Boolean = false,
+        /** Pin to exactly [maxHeight] rather than allowing anything up to it. */
+        exactHeight: Boolean = false,
     ): MediaItem {
-        val url = selectUrl(info, audioOnly, maxHeight)
+        val selection = selectStreams(info, audioOnly, maxHeight, forceProgressive, exactHeight)
 
         val metadata = MediaMetadata.Builder()
             .setTitle(ref.title)
@@ -101,46 +114,77 @@ object Playback {
 
         val builder = MediaItem.Builder()
             .setMediaId(ref.id)
-            .setUri(url)
+            .setUri(selection.uri)
             .setMediaMetadata(metadata)
 
-        if (captionsOn && !ref.isLive) {
+        if (selection.isManifest) builder.setMimeType(DashManifest.MIME)
+
+        // Always attach the tracks; visibility is controlled by disabledTrackTypes.
+        // Gating attachment on the setting made the in-player toggle a no-op.
+        if (!ref.isLive) {
             val subtitles = buildSubtitles(info)
             if (subtitles.isNotEmpty()) builder.setSubtitleConfigurations(subtitles)
         }
         return builder.build()
     }
 
-    private fun selectUrl(info: StreamInfo, audioOnly: Boolean, maxHeight: Int): String {
-        val isLive = info.streamType == StreamType.LIVE
+    /** Resolutions offered for [info], highest first. */
+    fun availableHeights(info: StreamInfo): List<Int> {
+        val adaptive = DashManifest.availableHeights(info)
+        if (adaptive.isNotEmpty()) return adaptive
+        if (info.streamType != StreamType.NORMAL) return emptyList()
+        return info.videoStreams.map { heightOf(it) }.filter { it > 0 }.distinct().sortedDescending()
+    }
 
+    fun selectStreams(
+        info: StreamInfo,
+        audioOnly: Boolean,
+        maxHeight: Int,
+        forceProgressive: Boolean = false,
+        exactHeight: Boolean = false,
+    ): Selection {
         if (audioOnly || info.streamType == StreamType.AUDIO) {
-            val audio = info.audioStreams.maxByOrNull { it.bitrate }
-            return audio?.url
+            // On a dubbed video the highest bitrate is an arbitrary language; prefer
+            // the original track first.
+            // Always the original track on a dubbed video.
+            val audio = info.audioStreams
+                .let { all -> all.filter { it.audioIsDefault }.ifEmpty { all } }
+                .maxByOrNull { it.bitrate }
+            val url = audio?.url
                 ?: info.videoStreams.firstOrNull()?.url
                 ?: info.hlsUrl
                 ?: info.url
+            return Selection(url, false, 0)
         }
 
-        if (isLive) {
-            return info.hlsUrl ?: bestProgressive(info) ?: info.url
+        if (info.streamType == StreamType.LIVE) {
+            // Live is a single manifest carrying both tracks already.
+            val url = info.hlsUrl ?: bestProgressive(info) ?: info.url
+            return Selection(url, false, 0)
         }
 
-        // Progressive formats carry audio+video combined — ideal for playback.
+        val cap = if (maxHeight > 0) maxHeight else Int.MAX_VALUE
+
+        // Adaptive via a generated manifest — the only route above 360p, since the
+        // video-only streams 403 the range-less whole-file read a progressive source
+        // issues. Segment requests are bounded, which googlevideo does serve.
+        if (!forceProgressive) {
+            val manifest = DashManifest.build(info, cap, exactHeight)
+            if (manifest != null) {
+                val encoded = Base64.encodeToString(manifest.toByteArray(), Base64.NO_WRAP)
+                val height = DashManifest.availableHeights(info).firstOrNull { it <= cap } ?: 0
+                return Selection("data:${DashManifest.MIME};base64,$encoded", true, height)
+            }
+        }
+
         val progressive = info.videoStreams
-        val withinLimit = progressive.filter { heightOf(it) in 1..maxHeight }
-        val mp4WithinLimit = withinLimit
-            .filter { it.suffix.equals("mp4", ignoreCase = true) }
-            .maxByOrNull { heightOf(it) }
-        val best = mp4WithinLimit
-            ?: withinLimit.maxByOrNull { heightOf(it) }
+        val best = progressive.filter { heightOf(it) in 1..cap }.maxByOrNull { heightOf(it) }
             ?: progressive.maxByOrNull { heightOf(it) }
-        if (best != null) return best.url
+        if (best != null) return Selection(best.url, false, heightOf(best))
 
-        // No combined format: fall back to the DASH manifest (handles A/V sync).
-        if (!info.dashMpdUrl.isNullOrBlank()) return info.dashMpdUrl
+        if (!info.dashMpdUrl.isNullOrBlank()) return Selection(info.dashMpdUrl, true, 0)
 
-        return info.videoOnlyStreams.firstOrNull()?.url ?: info.url
+        return Selection(info.videoOnlyStreams.firstOrNull()?.url ?: info.url, false, 0)
     }
 
     private fun bestProgressive(info: StreamInfo): String? =

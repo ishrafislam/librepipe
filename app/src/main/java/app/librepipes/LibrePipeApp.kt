@@ -4,6 +4,9 @@ import android.app.Application
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.di.AppContainer
 import app.librepipes.notify.NotificationChannels
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import app.librepipes.notify.UploadScheduler
 
 /**
@@ -14,6 +17,12 @@ class LibrePipeApp : Application() {
 
     lateinit var container: AppContainer
         private set
+
+    /**
+     * For work started from a composable that is about to leave the composition — a
+     * menu sheet dismissing itself would cancel `rememberCoroutineScope` mid-flight.
+     */
+    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()

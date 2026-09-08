@@ -187,6 +187,13 @@ private fun ButtonsSection() {
 private fun InputsSection() {
     LpSearchBar(value = "", onValueChange = {}, placeholder = "Search")
     LpSearchBar(value = "compose", onValueChange = {}, placeholder = "Search")
+    LpSearchBar(
+        value = "kernel module signing",
+        onValueChange = {},
+        placeholder = "Search",
+        onBack = {},
+        onVoice = {},
+    )
     LpOutlinedTextField(value = "", onValueChange = {}, label = "Playlist name")
     var radio by remember { mutableStateOf(0) }
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

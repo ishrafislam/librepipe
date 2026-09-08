@@ -15,6 +15,24 @@ data class StreamFormat(
     val height: Int = 0,
     val audioQuality: String? = null,
     val approxDurationMs: String? = null,
+    /** Codec string from the mimeType's `codecs="…"` clause, e.g. "avc1.640028". */
+    val codecs: String? = null,
+    val contentLength: Long = 0L,
+    val fps: Int = 0,
+    val audioSampleRate: Int = 0,
+    val audioChannels: Int = 0,
+    /** Dubbed-track id, e.g. "bn.3"; null on single-track videos. */
+    val audioTrackId: String? = null,
+    /** Human label for the track, e.g. "Bangla" or "English original". */
+    val audioTrackName: String? = null,
+    /** True for the video's original-language track. */
+    val audioIsDefault: Boolean = false,
+    /** BCP-47-ish language tag, e.g. "bn" or "zh-Hans". */
+    val audioLanguage: String? = null,
+    /** Byte range of the init segment, "start-end". Required to build a DASH manifest. */
+    val initRange: String? = null,
+    /** Byte range of the segment index, "start-end". Required to build a DASH manifest. */
+    val indexRange: String? = null,
     /** Whether the format carries a video (avc1/vp9/av01/...) track. */
     val hasVideo: Boolean = true,
     /** Whether the format carries an audio (mp4a/opus/...) track. */
@@ -40,6 +58,24 @@ data class Chapter(
 )
 
 /**
+ * Watch-page metadata that the player response does not carry: the channel's avatar and
+ * subscriber line, and the absolute upload date. Fetched separately from `next` so
+ * playback never waits on it.
+ */
+data class WatchNext(
+    val uploaderName: String? = null,
+    val uploaderUrl: String? = null,
+    val uploaderId: String? = null,
+    val uploaderAvatarUrl: String? = null,
+    /** Already formatted by YouTube, e.g. "4.53M subscribers". */
+    val subscriberText: String? = null,
+    /** Absolute date, e.g. "Oct 24, 2009". */
+    val dateText: String? = null,
+    /** Relative date, e.g. "16 years ago". */
+    val relativeDateText: String? = null,
+)
+
+/**
  * Everything needed to play or download a video, resolved from the
  * InnerTube player response (replaces NewPipe's StreamInfo).
  */
@@ -53,6 +89,8 @@ data class StreamInfo(
     val duration: Long = 0L,
     val viewCount: Long = 0L,
     val textualDate: String? = null,
+    /** `videoDetails.shortDescription` from the player response. */
+    val description: String? = null,
     val streamType: StreamType = StreamType.NORMAL,
     /** Epoch millis when a premiere/live stream goes live; null otherwise. */
     val premiereAt: Long? = null,

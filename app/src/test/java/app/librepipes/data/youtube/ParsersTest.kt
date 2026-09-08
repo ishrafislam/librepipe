@@ -178,8 +178,10 @@ class ParsersTest {
         assertEquals("UCP7uiEZIqci43m22KDl0sNw", channel.id)
         assertEquals("Kotlin by JetBrains", channel.name)
         assertEquals(99_800L, channel.subscriberCount)
+        assertEquals(717L, channel.videoCount)
         assertTrue(channel.description.orEmpty().contains("Concise"))
         assertNotNull(channel.avatarUrl)
+        assertNotNull(channel.bannerUrl)
 
         val tabs = Parsers.channelTabs(page)
         assertTrue(tabs.any { it.first == "Videos" })
@@ -396,5 +398,25 @@ class ParsersTest {
     fun streamInfo_premieresWithoutUpcomingFlagHaveNoPremiereAt() {
         val info = Parsers.parseStreamInfo(playerResponse("OK"), "VID1")
         assertNull(info.premiereAt)
+    }
+
+    @Test
+    fun streamInfo_finishedLiveStreamIsNotLive() {
+        // YouTube keeps isLiveContent set on the VOD of a stream that has ended; only
+        // isLive means "live right now".
+        val ended = playerResponse("OK")
+        ended.getJSONObject("videoDetails")
+            .put("isLiveContent", true)
+            .put("isLive", false)
+        assertEquals(StreamType.NORMAL, Parsers.parseStreamInfo(ended, "VID1").streamType)
+    }
+
+    @Test
+    fun streamInfo_liveNowIsLive() {
+        val live = playerResponse("OK")
+        live.getJSONObject("videoDetails")
+            .put("isLiveContent", true)
+            .put("isLive", true)
+        assertEquals(StreamType.LIVE, Parsers.parseStreamInfo(live, "VID1").streamType)
     }
 }

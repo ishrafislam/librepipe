@@ -6,8 +6,39 @@ import android.content.Intent
 import androidx.concurrent.futures.await
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import app.librepipes.LibrePipeApp
+import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.StreamRef
-import app.librepipes.util.toAppError
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
+
+/** Intent extra carrying the video URL the watch route should open. */
+const val EXTRA_WATCH_URL = "app.librepipes.WATCH_URL"
+
+/**
+ * Hands a `StreamRef` plus its queue to the watch route. A queue is a list, so it can't
+ * ride in a nav argument; this bridges the gap for the one hop between navigate and the
+ * ViewModel being constructed.
+ */
+object WatchRequest {
+    @Volatile
+    private var pending: Pair<StreamRef, List<StreamRef>>? = null
+
+    fun set(ref: StreamRef, queue: List<StreamRef>) {
+        pending = ref to queue
+    }
+
+    /** Returns the pending request when it matches [url], clearing it. */
+    fun take(url: String): Pair<StreamRef, List<StreamRef>>? {
+        val current = pending ?: return null
+        if (current.first.url != url) return null
+        pending = null
+        return current
+    }
+}
 
 /**
  * Starts playback on the shared [PlaybackService] session and opens the
@@ -15,30 +46,23 @@ import app.librepipes.util.toAppError
  */
 object PlaybackOpener {
 
+    private val queueGeneration = QueueReplacementGeneration()
+    @Volatile
+    private var queueFillJob: Job? = null
+
     /**
-     * Resolves and starts playback for [ref] (optionally inside [queue]),
-     * then opens the full-screen player. Never crashes: a resolve failure is
-     * forwarded to [NowPlayingActivity] as an in-frame error state.
+     * Opens the watch route for [ref] from outside the Compose tree (notifications,
+     * the popup player, deep links). The route's ViewModel starts the session itself,
+     * so this only routes.
      */
-    suspend fun playFull(context: Context, ref: StreamRef, queue: List<StreamRef> = listOf(ref)) {
-        val result = runCatching { startSession(context, ref, queue) }
-        val error = result.exceptionOrNull()?.toAppError()
-        val premiereAt = result.getOrNull()?.premiereAt
-        val intent = Intent(context, NowPlayingActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, ref.toJson())
-            .putStringArrayListExtra(
-                NowPlayingActivity.EXTRA_QUEUE_JSON,
-                ArrayList(queue.map { it.toJson() })
-            )
-        if (error != null) {
-            intent.putExtra(NowPlayingActivity.EXTRA_STREAM_ERROR_CODE, error.code)
-                .putExtra(NowPlayingActivity.EXTRA_STREAM_ERROR_MESSAGE, error.message)
-        }
-        if (premiereAt != null) {
-            intent.putExtra(NowPlayingActivity.EXTRA_PREMIERE_AT, premiereAt)
-        }
-        context.startActivity(intent)
+    fun openWatch(context: Context, ref: StreamRef, queue: List<StreamRef> = emptyList()) {
+        WatchRequest.set(ref, queue)
+        context.startActivity(
+            Intent()
+                .setClassName(context, "app.librepipes.ui.MainActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(EXTRA_WATCH_URL, ref.url)
+        )
     }
 
     /** Starts playback without opening any UI (background/audio-only mode). */
@@ -47,26 +71,130 @@ object PlaybackOpener {
     }
 
     /**
-     * Ensures [ref] is playing on the session without switching UI. Returns
-     * the resolved items (null on failure — callers decide how to surface it).
+     * Ensures [ref] is playing on the session without switching UI. Returns the resolved
+     * items, or null when the session already held [ref] and nothing had to be resolved
+     * (callers refetch their own metadata in that case).
      */
     suspend fun startSession(
         context: Context,
         ref: StreamRef,
         queue: List<StreamRef> = listOf(ref),
+        incrementalQueue: Boolean = false,
     ): Playback.Resolved? {
-        val resolved = Playback.resolve(context, ref, queue)
+        // Already somewhere in the timeline: seek to it instead of rebuilding. A rebuild
+        // would throw away a queue the user built, and reopening the playing video from
+        // the mini player is the most common way to land here — often mid-buffer, so this
+        // cannot be narrowed to STATE_READY.
+        if (!incrementalQueue && adoptExisting(context, ref)) return null
+
+        val generation = beginQueueReplacement()
+        val resolved = Playback.resolve(
+            context = context,
+            first = ref,
+            queue = if (incrementalQueue) listOf(ref) else queue,
+        )
         val controller = connect(context)
         try {
-            val current = controller.currentMediaItem?.mediaId
-            if (current == ref.id && controller.playbackState == androidx.media3.common.Player.STATE_READY) {
-                controller.play()
-                return resolved
-            }
+            // Disable the renderers first so the video codec is released. Swapping items
+            // on a playing player let it carry a codec configured for the previous stream
+            // into the next one — visible as torn macroblocks for the first seconds when
+            // moving from a DASH video to a live HLS stream.
+            controller.stop()
+            controller.clearMediaItems()
             controller.setMediaItems(resolved.items, resolved.startIndex, resolved.startPosition)
             controller.prepare()
             controller.play()
+            if (incrementalQueue && resolved.items.isNotEmpty()) {
+                fillQueueIncrementally(
+                    context = context,
+                    rootId = ref.id,
+                    refs = queue,
+                    generation = generation,
+                )
+            }
             return resolved
+        } finally {
+            controller.release()
+        }
+    }
+
+    private fun beginQueueReplacement(): Long = synchronized(this) {
+        queueFillJob?.cancel()
+        queueFillJob = null
+        queueGeneration.next()
+    }
+
+    private fun fillQueueIncrementally(
+        context: Context,
+        rootId: String,
+        refs: List<StreamRef>,
+        generation: Long,
+    ) {
+        val app = context.applicationContext as LibrePipeApp
+        val plan = incrementalQueuePlan(rootId, refs)
+        if (plan.before.isEmpty() && plan.after.isEmpty()) return
+
+        val job = app.appScope.launch {
+            val settings = app.container.settings.snapshot()
+            val controller = connect(context)
+            try {
+                suspend fun resolve(next: StreamRef) = runCatching {
+                    val info = Extractor.stream(next.url)
+                    if (info.premiereAt != null) null else Playback.buildItem(
+                        info = info,
+                        ref = next,
+                        audioOnly = settings.audioOnly || next.isAudio,
+                        maxHeight = settings.maxQuality,
+                    )
+                }.getOrNull()
+
+                for (next in plan.after) {
+                    coroutineContext.ensureActive()
+                    if (!queueGeneration.isCurrent(generation)) break
+                    val item = resolve(next) ?: continue
+                    coroutineContext.ensureActive()
+                    if (!queueGeneration.isCurrent(generation) || !controller.containsMediaId(rootId)) break
+                    if (!controller.containsMediaId(next.id)) controller.addMediaItem(item)
+                }
+
+                var insertionIndex = 0
+                for (previous in plan.before) {
+                    coroutineContext.ensureActive()
+                    if (!queueGeneration.isCurrent(generation)) break
+                    val item = resolve(previous) ?: continue
+                    coroutineContext.ensureActive()
+                    if (!queueGeneration.isCurrent(generation) || !controller.containsMediaId(rootId)) break
+                    if (!controller.containsMediaId(previous.id)) {
+                        controller.addMediaItem(insertionIndex, item)
+                        insertionIndex++
+                    }
+                }
+            } finally {
+                controller.release()
+            }
+        }
+        synchronized(this) {
+            if (queueGeneration.isCurrent(generation)) {
+                queueFillJob = job
+            } else {
+                job.cancel()
+            }
+        }
+    }
+
+    private fun MediaController.containsMediaId(id: String): Boolean =
+        (0 until mediaItemCount).any { getMediaItemAt(it).mediaId == id }
+
+    private suspend fun adoptExisting(context: Context, ref: StreamRef): Boolean {
+        val controller = connect(context)
+        try {
+            if (controller.playbackState == androidx.media3.common.Player.STATE_IDLE) return false
+            val index = (0 until controller.mediaItemCount)
+                .firstOrNull { controller.getMediaItemAt(it).mediaId == ref.id }
+                ?: return false
+            if (index != controller.currentMediaItemIndex) controller.seekTo(index, 0L)
+            controller.play()
+            return true
         } finally {
             controller.release()
         }
@@ -74,6 +202,7 @@ object PlaybackOpener {
 
     /** Plays a local file (e.g. a finished download) on the session. */
     suspend fun playUri(context: Context, uri: android.net.Uri, title: String) {
+        beginQueueReplacement()
         val controller = connect(context)
         try {
             val item = androidx.media3.common.MediaItem.Builder()
@@ -99,4 +228,30 @@ object PlaybackOpener {
         )
         return MediaController.Builder(context, token).buildAsync().await()
     }
+}
+
+internal data class IncrementalQueuePlan(
+    val before: List<StreamRef>,
+    val after: List<StreamRef>,
+)
+
+internal class QueueReplacementGeneration {
+    private val value = AtomicLong(0)
+
+    fun next(): Long = value.incrementAndGet()
+
+    fun isCurrent(generation: Long): Boolean = value.get() == generation
+}
+
+internal fun incrementalQueuePlan(
+    selectedId: String,
+    refs: List<StreamRef>,
+): IncrementalQueuePlan {
+    val queue = refs.distinctBy { it.id }
+    val selectedIndex = queue.indexOfFirst { it.id == selectedId }
+    if (selectedIndex < 0) return IncrementalQueuePlan(emptyList(), queue)
+    return IncrementalQueuePlan(
+        before = queue.take(selectedIndex),
+        after = queue.drop(selectedIndex + 1),
+    )
 }

@@ -10,10 +10,21 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"
         tools:ignore="ScopedStorage" />
+
+    <!-- Package visibility for resolving the system speech recognizer (voice search). -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
 
     <application
         android:name=".LibrePipeApp"
@@ -29,6 +40,9 @@
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:theme="@style/Theme.LibrePipe.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -61,16 +75,6 @@
 
         <!-- Debug-only component kit gallery — declared exported in app/src/debug/AndroidManifest.xml -->
 
-        <!-- Full screen player -->
-        <activity
-            android:name=".player.NowPlayingActivity"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale"
-            android:supportsPictureInPicture="true"
-            android:resizeableActivity="true"
-            android:theme="@style/Theme.LibrePipe.Fullscreen" />
-
         <!-- Background audio playback service (Media3 session) -->
         <service
             android:name=".player.PlaybackService"
@@ -86,6 +90,16 @@
             android:name=".player.PopupPlayerService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_file_paths" />
+        </provider>
     </application>
 
 </manifest>

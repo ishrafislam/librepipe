@@ -14,7 +14,7 @@ import app.librepipes.LibrePipeApp
 import app.librepipes.data.db.SubscriptionEntity
 import app.librepipes.data.extractor.Extractor
 import app.librepipes.data.model.StreamRef
-import app.librepipes.player.NowPlayingActivity
+import app.librepipes.player.EXTRA_WATCH_URL
 
 /**
  * Periodically checks subscribed channels and posts a grouped notification
@@ -44,10 +44,13 @@ class UploadRefreshWorker(
                 if (newVideos.isNotEmpty() && subscription.latestStreamId != null) {
                     postUploadNotifications(subscription, newVideos)
                 }
+                // Only advance the timestamp when something actually arrived: the unread
+                // ring and the nav badge both read lastCheckedAt > lastVisitedAt, so
+                // bumping it unconditionally would mark every channel unread each pass.
                 container.subscriptions.markChecked(
                     subscription.channelUrl,
                     latest,
-                    System.currentTimeMillis(),
+                    if (newVideos.isNotEmpty()) System.currentTimeMillis() else subscription.lastCheckedAt,
                 )
             } catch (e: Exception) {
                 failedChannels++
@@ -81,8 +84,9 @@ class UploadRefreshWorker(
 
         val manager = NotificationManagerCompat.from(applicationContext)
         for (video in videos) {
-            val intent = Intent(applicationContext, NowPlayingActivity::class.java)
-                .putExtra(NowPlayingActivity.EXTRA_STREAM_JSON, video.toJson())
+            val intent = Intent()
+                .setClassName(applicationContext, "app.librepipes.ui.MainActivity")
+                .putExtra(EXTRA_WATCH_URL, video.url)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             val pendingIntent = PendingIntent.getActivity(
                 applicationContext,
